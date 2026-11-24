@@ -127,4 +127,17 @@ describe('runNotify', () => {
     await runNotify({ repo, pusher: p, now: () => at8Chicago });
     expect(sent.map((s) => s.endpoint)).toEqual([sub.endpoint]);
   });
+  it('alerts a linked user about the shared cards using their own settings and devices', async () => {
+    const repo = new MemoryRepo();
+    await repo.putAccount('owner', account());
+    await repo.replaceLoans('owner', 'a1', [loan('over', '2026-11-20')]);
+    await repo.putLink('owner', { partner: 'u2', owner: 'owner' });
+    await repo.putLink('u2', { partner: 'owner', owner: 'owner' });
+    // Only the partner has alerts on; the owner has no settings at all.
+    await repo.putPrefs('u2', DEFAULT_PREFS);
+    await repo.putSub('u2', { ...sub, endpoint: 'https://push.example/u2' });
+    const { p, sent } = pusher();
+    await runNotify({ repo, pusher: p, now: () => at8Chicago });
+    expect(sent.map((s) => s.endpoint)).toEqual(['https://push.example/u2']);
+  });
 });

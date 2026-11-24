@@ -352,6 +352,148 @@ describe('bad credentials', () => {
       expect(s.users.users.map((u) => u.sub)).toEqual([b]);
     });
 
+    describe('linked accounts', () => {
+      async function linked() {
+        const s = setup();
+        const invite = async (email: string) =>
+          (await asAdmin(s, 'POST', '/api/admin/users', { email })).json.user.sub as string;
+        const a = await invite('a@example.com');
+        const b = await invite('b@example.com');
+        const cardA = (await s.call(a, 'POST', '/api/accounts', newAccount)).json.account
+          .id as string;
+        const link = () => asAdmin(s, 'POST', `/api/admin/users/${a}/link`, { partner: b });
+        return { s, a, b, cardA, link, invite };
+      }
+
+      it('merges cards and shares them in both directions, keeping alerts separate', async () => {
+        const { s, a, b, cardA, link } = await linked();
+        const cardB = (
+          await s.call(b, 'POST', '/api/accounts', { ...newAccount, displayName: 'B' })
+        ).json.account.id as string;
+        expect((await link()).status).toBe(200);
+        for (const who of [a, b]) {
+          const r = await s.call(who, 'GET', '/api/loans');
+          expect(r.json.accounts.map((x: { id: string }) => x.id).sort()).toEqual(
+            [cardA, cardB].sort(),
+          );
+        }
+        // PINs moved with the cards, so the partner can renew a card they didn't add.
+        const owner = (await s.repo.getLink(a))!.owner;
+        expect(await s.repo.listAccounts(owner)).toHaveLength(2);
+        expect(s.creds.map.size).toBe(2);
+        expect(
+          (await s.call(b, 'POST', `/api/accounts/${cardA}/renew`, { checkoutIds: ['c1'] })).status,
+        ).toBe(200);
+
+        await s.call(a, 'PUT', '/api/prefs', DEFAULT_PREFS);
+        expect((await s.call(b, 'GET', '/api/prefs')).json.prefs).toBeNull();
+        await s.call(b, 'POST', '/api/push-subscriptions', {
+          endpoint: 'https://push.example/b',
+          keys: { p256dh: 'p', auth: 'a' },
+        });
+        expect(await s.repo.listSubs(a)).toHaveLength(0);
+      });
+
+      it('lets either partner edit and delete shared cards, and shares the refresh cooldown', async () => {
+        const { s, a, b, cardA, link } = await linked();
+        await link();
+        const owner = (await s.repo.getLink(a))!.owner;
+        expect(
+          (await s.call(b, 'PATCH', `/api/accounts/${cardA}`, { displayName: 'Shared' })).status,
+        ).toBe(200);
+        expect((await s.repo.getAccount(owner, cardA))?.displayName).toBe('Shared');
+        expect((await s.call(a, 'POST', '/api/refresh')).status).toBe(202);
+        expect((await s.call(b, 'POST', '/api/refresh')).status).toBe(429);
+        expect(s.invoked).toEqual([{ sub: owner }]);
+        expect((await s.call(b, 'DELETE', `/api/accounts/${cardA}`)).status).toBe(200);
+        expect((await s.call(a, 'GET', '/api/loans')).json.accounts).toHaveLength(0);
+      });
+
+      it('lists the link and the shared card count', async () => {
+        const { s, a, b, link } = await linked();
+        await link();
+        const list = (await asAdmin(s, 'GET', '/api/admin/users')).json.users;
+        expect(list).toMatchObject([
+          { email: 'a@example.com', cardCount: 1, linkedWith: { sub: b, email: 'b@example.com' } },
+          { email: 'b@example.com', cardCount: 1, linkedWith: { sub: a, email: 'a@example.com' } },
+        ]);
+      });
+
+      it('lets an admin link their own account, but not everyone else', async () => {
+        const { s, b } = await linked();
+        const own = await asAdmin(s, 'POST', '/api/admin/users/admin-sub/link', { partner: b });
+        expect(own.status).toBe(200);
+        expect(
+          (await s.call(b, 'POST', '/api/admin/users/admin-sub/link', { partner: b })).status,
+        ).toBe(403);
+      });
+
+      it('rejects self-links, double links and unknown unlinks', async () => {
+        const { s, a, b, link, invite } = await linked();
+        const c = await invite('c@example.com');
+        expect(
+          (await asAdmin(s, 'POST', `/api/admin/users/${a}/link`, { partner: a })).status,
+        ).toBe(409);
+        await link();
+        expect(
+          (await asAdmin(s, 'POST', `/api/admin/users/${c}/link`, { partner: b })).status,
+        ).toBe(409);
+        expect(
+          (await asAdmin(s, 'DELETE', `/api/admin/users/${c}/link`, { keeper: c })).status,
+        ).toBe(409);
+        expect(
+          (await asAdmin(s, 'DELETE', `/api/admin/users/${a}/link`, { keeper: c })).status,
+        ).toBe(409);
+      });
+
+      it.each(['a', 'b'] as const)(
+        'on unlink, the chosen keeper (%s) keeps the cards',
+        async (k) => {
+          const { s, a, b, link } = await linked();
+          await link();
+          const keeper = k === 'a' ? a : b;
+          const other = k === 'a' ? b : a;
+          const r = await asAdmin(s, 'DELETE', `/api/admin/users/${a}/link`, { keeper });
+          expect(r.status).toBe(200);
+          expect((await s.call(keeper, 'GET', '/api/loans')).json.accounts).toHaveLength(1);
+          expect((await s.call(other, 'GET', '/api/loans')).json.accounts).toHaveLength(0);
+          expect(await s.repo.getLink(a)).toBeUndefined();
+          expect(await s.repo.getLink(b)).toBeUndefined();
+          // The kept card still has working credentials.
+          const card = (await s.repo.listAccounts(keeper))[0]!;
+          expect(
+            (
+              await s.call(keeper, 'POST', `/api/accounts/${card.id}/renew`, {
+                checkoutIds: ['c1'],
+              })
+            ).status,
+          ).toBe(200);
+        },
+      );
+
+      it('deleting the owner leaves the cards with the partner', async () => {
+        const { s, a, b, link } = await linked();
+        await link();
+        const owner = (await s.repo.getLink(a))!.owner;
+        const gone = owner;
+        const stays = owner === a ? b : a;
+        expect((await asAdmin(s, 'DELETE', `/api/admin/users/${gone}`)).status).toBe(200);
+        expect(await s.repo.getLink(stays)).toBeUndefined();
+        expect((await s.call(stays, 'GET', '/api/loans')).json.accounts).toHaveLength(1);
+        expect(s.creds.map.size).toBe(1);
+      });
+
+      it("deleting the non-owner leaves the owner's cards and unlinks", async () => {
+        const { s, a, b, link } = await linked();
+        await link();
+        const owner = (await s.repo.getLink(a))!.owner;
+        const gone = owner === a ? b : a;
+        await asAdmin(s, 'DELETE', `/api/admin/users/${gone}`);
+        expect(await s.repo.getLink(owner)).toBeUndefined();
+        expect((await s.call(owner, 'GET', '/api/loans')).json.accounts).toHaveLength(1);
+      });
+    });
+
     it("won't let an admin disable or delete themself", async () => {
       const s = setup();
       expect((await asAdmin(s, 'DELETE', '/api/admin/users/admin-sub')).status).toBe(400);

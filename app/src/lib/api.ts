@@ -26,6 +26,10 @@ export const httpApi: Api = {
     void (await call('PATCH', `/admin/users/${encodeURIComponent(sub)}`, { enabled })),
   adminDeleteUser: async (sub) =>
     void (await call('DELETE', `/admin/users/${encodeURIComponent(sub)}`)),
+  adminLinkUsers: async (sub, partner) =>
+    void (await call('POST', `/admin/users/${encodeURIComponent(sub)}/link`, { partner })),
+  adminUnlinkUser: async (sub, keeper) =>
+    void (await call('DELETE', `/admin/users/${encodeURIComponent(sub)}/link`, { keeper })),
   getLoans: () => call('GET', '/loans'),
   addAccount: async (input) => (await call<{ account: never }>('POST', '/accounts', input)).account,
   updateAccount: async (id, patch) =>

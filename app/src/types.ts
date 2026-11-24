@@ -60,6 +60,8 @@ export interface AdminUser {
   createdAt?: string;
   cardCount: number;
   isSelf: boolean;
+  /** Shares cards and checkouts with this user; alert settings stay separate. */
+  linkedWith?: { sub: string; email: string } | null;
 }
 
 export interface Api {
@@ -68,6 +70,9 @@ export interface Api {
   adminInviteUser(email: string): Promise<void>;
   adminSetUserEnabled(sub: string, enabled: boolean): Promise<void>;
   adminDeleteUser(sub: string): Promise<void>;
+  adminLinkUsers(sub: string, partner: string): Promise<void>;
+  /** `keeper` (one of the two) keeps all the shared cards. */
+  adminUnlinkUser(sub: string, keeper: string): Promise<void>;
   getLoans(): Promise<LoansResponse>;
   addAccount(input: { displayName: string; username: string; pin: string }): Promise<Account>;
   updateAccount(id: string, patch: { displayName?: string; pin?: string }): Promise<Account>;

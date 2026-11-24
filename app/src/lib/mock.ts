@@ -177,6 +177,27 @@ export function createMockServices(): Services {
       users = users.filter((u) => u.sub !== sub);
       await wait(0);
     },
+    adminLinkUsers: async (sub, partner) => {
+      const a = users.find((u) => u.sub === sub)!;
+      const b = users.find((u) => u.sub === partner)!;
+      if (a.linkedWith || b.linkedWith) throw new Error('Unlink that user first');
+      // Cards merge under whoever has more; both then show the combined count.
+      const total = a.cardCount + b.cardCount;
+      a.cardCount = b.cardCount = total;
+      a.linkedWith = { sub: b.sub, email: b.email };
+      b.linkedWith = { sub: a.sub, email: a.email };
+      await wait(0);
+    },
+    adminUnlinkUser: async (sub, keeper) => {
+      const a = users.find((u) => u.sub === sub)!;
+      const b = users.find((u) => u.sub === a.linkedWith?.sub)!;
+      const total = a.cardCount;
+      for (const u of [a, b]) {
+        u.cardCount = u.sub === keeper ? total : 0;
+        u.linkedWith = null;
+      }
+      await wait(0);
+    },
     getLoans: () => wait({ accounts: structuredClone(accounts), loans: structuredClone(loans) }),
     addAccount: async (input) => {
       const a: Account = {

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { type CredentialStore, SsmCredentialStore } from './lib/credentials.js';
 import { DynamoRepo, type Repo } from './lib/db.js';
 import { createLibraryClient } from './lib/library/client.js';
+import { LinkError, dataOwner, linkUsers, moveCards, unlinkUsers } from './lib/links.js';
 import { storeSnapshot } from './lib/refresh.js';
 import { type LibraryClient, LoginError, DEFAULT_PREFS } from './lib/types.js';
 import { CognitoUserDirectory, UserExistsError, type UserDirectory } from './lib/users.js';
@@ -60,6 +61,8 @@ const subInput = z.object({
 });
 const inviteInput = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
 const userPatch = z.object({ enabled: z.boolean() });
+const linkInput = z.object({ partner: z.string().min(1).max(64) });
+const unlinkInput = z.object({ keeper: z.string().min(1).max(64) });
 const renewInput = z.object({ checkoutIds: z.array(z.string().min(1)).min(1).max(100) });
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyStructuredResultV2 => ({
@@ -124,15 +127,29 @@ export function createApi(deps: ApiDeps) {
       if (id !== 'users') return notFound();
       const target = action;
       if (!target && method === 'GET') {
-        const [users, accounts] = await Promise.all([
+        const [users, accounts, links] = await Promise.all([
           deps.users.list(),
           deps.repo.listAllAccounts(),
+          deps.repo.listAllLinks(),
         ]);
         const cards = new Map<string, number>();
         for (const a of accounts) cards.set(a.sub, (cards.get(a.sub) ?? 0) + 1);
+        const linkOf = new Map(links.map((l) => [l.sub, l.link]));
+        const emailOf = new Map(users.map((u) => [u.sub, u.email]));
         return json(200, {
           users: users
-            .map((u) => ({ ...u, cardCount: cards.get(u.sub) ?? 0, isSelf: u.sub === sub }))
+            .map((u) => {
+              const link = linkOf.get(u.sub);
+              return {
+                ...u,
+                // Linked users share one set of cards, held under the link's owner.
+                cardCount: cards.get(link?.owner ?? u.sub) ?? 0,
+                isSelf: u.sub === sub,
+                linkedWith: link
+                  ? { sub: link.partner, email: emailOf.get(link.partner) ?? '' }
+                  : null,
+              };
+            })
             .sort((a, b) => a.email.localeCompare(b.email)),
         });
       }
@@ -146,6 +163,27 @@ export function createApi(deps: ApiDeps) {
           throw e;
         }
       }
+      if (target && parts[3] === 'link') {
+        // Unlike disable/delete, an admin may link their own account to someone else's.
+        try {
+          if (method === 'POST') {
+            const p = linkInput.safeParse(body);
+            if (!p.success) return bad(p.error);
+            await linkUsers(deps, target, p.data.partner);
+            return json(200, { ok: true });
+          }
+          if (method === 'DELETE') {
+            const p = unlinkInput.safeParse(body);
+            if (!p.success) return bad(p.error);
+            await unlinkUsers(deps, target, p.data.keeper);
+            return json(200, { ok: true });
+          }
+        } catch (e) {
+          if (e instanceof LinkError) return json(409, { error: e.message });
+          throw e;
+        }
+        return notFound();
+      }
       if (target) {
         if (target === sub) return json(400, { error: "You can't change your own account here" });
         if (method === 'PATCH') {
@@ -155,6 +193,12 @@ export function createApi(deps: ApiDeps) {
           return json(200, { ok: true });
         }
         if (method === 'DELETE') {
+          // A linked partner keeps the shared cards, so hand them over before deleting.
+          const link = await deps.repo.getLink(target);
+          if (link) {
+            if (link.owner === target) await moveCards(deps, target, link.partner);
+            await deps.repo.deleteLink(link.partner);
+          }
           // Data first: if Cognito deletion fails the user can still be retried, never orphaned.
           await deps.repo.deleteUser(target);
           await deps.creds.deleteAll(target);
@@ -165,11 +209,13 @@ export function createApi(deps: ApiDeps) {
       return notFound();
     }
 
+    // Cards, checkouts and their PINs belong to the link's owner; everything else to the caller.
+    const owner = await dataOwner(deps.repo, sub);
     if (root === 'loans' && method === 'GET' && !id) {
       const [accounts, loans, state] = await Promise.all([
-        deps.repo.listAccounts(sub),
-        deps.repo.listLoans(sub),
-        deps.repo.getState(sub),
+        deps.repo.listAccounts(owner),
+        deps.repo.listLoans(owner),
+        deps.repo.getState(owner),
       ]);
       return json(200, {
         accounts: accounts.map(({ libraryAccountId: _l, ...a }) => a),
@@ -185,50 +231,50 @@ export function createApi(deps: ApiDeps) {
         const login = await validateLogin(p.data.username, p.data.pin);
         if (login.error) return login.error;
         const accountId = ulid();
-        await deps.creds.put(sub, accountId, { username: p.data.username, pin: p.data.pin });
+        await deps.creds.put(owner, accountId, { username: p.data.username, pin: p.data.pin });
         const account = {
           id: accountId,
           displayName: p.data.displayName,
           maskedCard: `•••• ${p.data.username.slice(-4)}`,
           fees: { total: 0, items: [] },
         };
-        await deps.repo.putAccount(sub, account);
+        await deps.repo.putAccount(owner, account);
         // Reuse the validated session so the new account has data right away.
         try {
-          await storeSnapshot(deps.repo, sub, accountId, login.session, now());
+          await storeSnapshot(deps.repo, owner, accountId, login.session, now());
         } catch {
-          await deps.invokeScraper({ sub, accountId });
+          await deps.invokeScraper({ sub: owner, accountId });
         }
-        return json(201, { account: (await deps.repo.getAccount(sub, accountId)) ?? account });
+        return json(201, { account: (await deps.repo.getAccount(owner, accountId)) ?? account });
       }
 
       if (id) {
         // Owner + id looked up together: someone else's account is indistinguishable from none.
-        const account = await deps.repo.getAccount(sub, id);
+        const account = await deps.repo.getAccount(owner, id);
         if (!account) return notFound();
 
         if (!action && method === 'PATCH') {
           const p = accountPatch.safeParse(body);
           if (!p.success) return bad(p.error);
           if (p.data.pin !== undefined) {
-            const current = await deps.creds.get(sub, id);
+            const current = await deps.creds.get(owner, id);
             const login = await validateLogin(current.username, p.data.pin);
             if (login.error) return login.error;
-            await deps.creds.put(sub, id, { username: current.username, pin: p.data.pin });
+            await deps.creds.put(owner, id, { username: current.username, pin: p.data.pin });
           }
           const updated = { ...account, displayName: p.data.displayName ?? account.displayName };
           if (p.data.pin !== undefined) {
             updated.lastError = undefined;
             updated.needsAttention = undefined;
           }
-          await deps.repo.putAccount(sub, updated);
-          if (p.data.pin !== undefined) await deps.invokeScraper({ sub, accountId: id });
+          await deps.repo.putAccount(owner, updated);
+          if (p.data.pin !== undefined) await deps.invokeScraper({ sub: owner, accountId: id });
           return json(200, { account: updated });
         }
 
         if (!action && method === 'DELETE') {
-          await deps.creds.delete(sub, id);
-          await deps.repo.deleteAccount(sub, id);
+          await deps.creds.delete(owner, id);
+          await deps.repo.deleteAccount(owner, id);
           return json(200, { ok: true });
         }
 
@@ -236,16 +282,16 @@ export function createApi(deps: ApiDeps) {
           const p = renewInput.safeParse(body);
           if (!p.success) return bad(p.error);
           const owned = new Set(
-            (await deps.repo.listLoans(sub))
+            (await deps.repo.listLoans(owner))
               .filter((l) => l.accountId === id)
               .map((l) => l.checkoutId),
           );
           if (!p.data.checkoutIds.every((c) => owned.has(c))) return notFound();
-          const login = await validateLogin(...(await creds(sub, id)));
+          const login = await validateLogin(...(await creds(owner, id)));
           if (login.error) return login.error;
           const results = await login.session.renew(p.data.checkoutIds);
           try {
-            await storeSnapshot(deps.repo, sub, id, login.session, now());
+            await storeSnapshot(deps.repo, owner, id, login.session, now());
           } catch {
             /* results are still valid; the next refresh fixes the cache */
           }
@@ -255,13 +301,13 @@ export function createApi(deps: ApiDeps) {
     }
 
     if (root === 'refresh' && method === 'POST' && !id) {
-      const state = await deps.repo.getState(sub);
+      const state = await deps.repo.getState(owner);
       const last = state.lastManualRefreshAt ? Date.parse(state.lastManualRefreshAt) : 0;
       if (now().getTime() - last < REFRESH_COOLDOWN_MS) {
         return json(429, { error: 'Please wait a few minutes before refreshing again.' });
       }
-      await deps.repo.putState(sub, { lastManualRefreshAt: now().toISOString() });
-      await deps.invokeScraper({ sub });
+      await deps.repo.putState(owner, { lastManualRefreshAt: now().toISOString() });
+      await deps.invokeScraper({ sub: owner });
       return json(202, { ok: true });
     }
 
