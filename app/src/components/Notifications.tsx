@@ -1,25 +1,40 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { keys, usePrefs } from '../lib/queries';
 import type { Api, Prefs, PushService } from '../types';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export function Notifications({ api, push }: { api: Api; push: PushService }) {
-  const [prefs, setPrefs] = useState<Prefs | null>(null);
+  const queryClient = useQueryClient();
+  const server = usePrefs(api);
+  // Unsaved edits live here; until the first edit the form shows the cached server value.
+  const [draft, setDraft] = useState<Prefs | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? server.error?.message ?? null;
   const status = push.status();
 
+  const saved = server.data && {
+    ...server.data,
+    prefs: server.data.prefs ?? {
+      ...server.data.defaults,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+  };
+  const prefs = draft ?? saved?.prefs ?? null;
+  const setPrefs = setDraft;
+
+  // Remember what was saved so coming back to this tab shows it without a refetch.
+  const putPrefs = async (p: Prefs) => {
+    await api.putPrefs(p);
+    if (saved) queryClient.setQueryData(keys.prefs, { ...saved, prefs: p });
+  };
+
   useEffect(() => {
-    api.getPrefs().then(
-      (r) =>
-        setPrefs(
-          r.prefs ?? { ...r.defaults, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-        ),
-      (e: Error) => setError(e.message),
-    );
     push.isSubscribed().then(setSubscribed, () => undefined);
-  }, [api, push]);
+  }, [push]);
 
   async function toggle(on: boolean) {
     setError(null);
@@ -27,7 +42,7 @@ export function Notifications({ api, push }: { api: Api; push: PushService }) {
       if (on) {
         await api.addPushSubscription(await push.subscribe());
         // Save prefs now so the hourly notifier knows about this user.
-        if (prefs) await api.putPrefs(prefs);
+        if (prefs) await putPrefs(prefs);
       } else {
         const endpoint = await push.unsubscribe();
         if (endpoint) await api.removePushSubscription(endpoint);
@@ -80,7 +95,8 @@ export function Notifications({ api, push }: { api: Api; push: PushService }) {
           setMsg(null);
           setError(null);
           try {
-            await api.putPrefs(prefs);
+            await putPrefs(prefs);
+            setDraft(null);
             setMsg('Saved');
           } catch (err) {
             setError((err as Error).message);

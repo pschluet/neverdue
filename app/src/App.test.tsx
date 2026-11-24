@@ -1,16 +1,23 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { Checkouts } from './components/Checkouts';
 import { Notifications } from './components/Notifications';
 import { isIos } from './lib/push';
 import { createMockServices } from './lib/mock';
+import { createQueryClient } from './lib/queries';
 import type { Api, LoansResponse, Services } from './types';
 
 afterEach(() => {
   window.location.hash = '';
 });
+
+const withQuery = (ui: ReactElement) => (
+  <QueryClientProvider client={createQueryClient()}>{ui}</QueryClientProvider>
+);
 
 async function signedIn(): Promise<Services> {
   const s = createMockServices();
@@ -63,7 +70,7 @@ describe('Notifications', () => {
   it('saves preferences', async () => {
     const s = await signedIn();
     const put = vi.spyOn(s.api, 'putPrefs');
-    render(<Notifications api={s.api} push={s.push} />);
+    render(withQuery(<Notifications api={s.api} push={s.push} />));
     await userEvent.click(await screen.findByLabelText('Notify before due date'));
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put).toHaveBeenCalled());
@@ -73,7 +80,7 @@ describe('Notifications', () => {
   it('shows the Add to Home Screen hint when push needs an installed app', async () => {
     const s = await signedIn();
     s.push.status = () => 'needs-install';
-    render(<Notifications api={s.api} push={s.push} />);
+    render(withQuery(<Notifications api={s.api} push={s.push} />));
     expect(await screen.findByText(/Add Neverdue to your Home Screen first/)).toBeInTheDocument();
     expect(screen.getByRole('switch')).toBeDisabled();
   });
@@ -82,7 +89,7 @@ describe('Notifications', () => {
     const s = await signedIn();
     const add = vi.spyOn(s.api, 'addPushSubscription');
     const remove = vi.spyOn(s.api, 'removePushSubscription');
-    render(<Notifications api={s.api} push={s.push} />);
+    render(withQuery(<Notifications api={s.api} push={s.push} />));
     const sw = await screen.findByRole('switch');
     await userEvent.click(sw);
     await waitFor(() => expect(add).toHaveBeenCalled());
@@ -195,5 +202,55 @@ describe('App', () => {
     await waitFor(() => expect(screen.queryByTestId('linked')).not.toBeInTheDocument());
     expect(within(row('sam@example.com')).getByText(/3 cards/)).toBeInTheDocument();
     expect(within(row('paul@paulschlueter.com')).getByText(/0 cards/)).toBeInTheDocument();
+  });
+
+  it('does not refetch prefs when switching back to the Alerts tab', async () => {
+    const s = await signedIn();
+    const get = vi.spyOn(s.api, 'getPrefs');
+    render(<App services={s} />);
+    await screen.findByText(/The Overstory/);
+    await userEvent.click(screen.getByRole('link', { name: /Alerts/ }));
+    await screen.findByRole('heading', { name: 'Notifications' });
+    await userEvent.click(screen.getByRole('link', { name: /Checkouts/ }));
+    await screen.findByText(/The Overstory/);
+    await userEvent.click(screen.getByRole('link', { name: /Alerts/ }));
+    await screen.findByRole('heading', { name: 'Notifications' });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows saved prefs after switching away and back, without refetching', async () => {
+    const s = await signedIn();
+    const get = vi.spyOn(s.api, 'getPrefs');
+    render(<App services={s} />);
+    await screen.findByText(/The Overstory/);
+    await userEvent.click(screen.getByRole('link', { name: /Alerts/ }));
+    await userEvent.click(await screen.findByLabelText('Notify before due date'));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved');
+    await userEvent.click(screen.getByRole('link', { name: /Checkouts/ }));
+    await screen.findByText(/The Overstory/);
+    await userEvent.click(screen.getByRole('link', { name: /Alerts/ }));
+    expect(await screen.findByLabelText('Days before due')).toHaveValue(2);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches the admin user list but refreshes it after a change', async () => {
+    const s = createMockServices();
+    await s.auth.requestCode('paul@paulschlueter.com');
+    await s.auth.confirmCode('123456');
+    const list = vi.spyOn(s.api, 'adminListUsers');
+    render(<App services={s} />);
+    await userEvent.click(await screen.findByRole('link', { name: /Admin/ }));
+    await screen.findAllByTestId('user');
+    await userEvent.click(screen.getByRole('link', { name: /Checkouts/ }));
+    await screen.findByText(/The Overstory/);
+    await userEvent.click(screen.getByRole('link', { name: /Admin/ }));
+    await screen.findAllByTestId('user');
+    expect(list).toHaveBeenCalledTimes(1);
+
+    const sam = screen.getByText('sam@example.com').closest('li')!;
+    await userEvent.click(within(sam).getByRole('button', { name: 'Disable' }));
+    expect(await within(sam).findByText('Disabled')).toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(2);
   });
 });

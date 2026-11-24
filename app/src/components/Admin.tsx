@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { keys, useAdminUsers } from '../lib/queries';
 import type { AdminUser, Api } from '../types';
 
 const statusPill = (u: AdminUser) => {
@@ -18,26 +20,22 @@ const joined = (iso?: string) =>
     : '';
 
 export function Admin({ api }: { api: Api }) {
-  const [users, setUsers] = useState<AdminUser[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const query = useAdminUsers(api);
+  const users = query.data ?? null;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? query.error?.message ?? null;
   const [linking, setLinking] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setUsers(await api.adminListUsers());
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [api]);
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setError(null);
     try {
       await fn();
-      await load();
+      // Linking and unlinking move cards between users, so loans change too.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.adminUsers }),
+        queryClient.invalidateQueries({ queryKey: keys.loans }),
+      ]);
       return true;
     } catch (e) {
       setError((e as Error).message);

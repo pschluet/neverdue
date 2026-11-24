@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { createQueryClient, keys, useLoans, useMe } from './lib/queries';
 import { Accounts } from './components/Accounts';
 import { Checkouts } from './components/Checkouts';
 import { Admin } from './components/Admin';
 import { BellIcon, BooksIcon, CardIcon, ShieldIcon } from './components/Icons';
 import { Notifications } from './components/Notifications';
 import { SignIn } from './components/SignIn';
-import type { LoansResponse, Services } from './types';
+import type { Services } from './types';
 
 type Tab = 'checkouts' | 'accounts' | 'notifications' | 'admin';
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
@@ -23,6 +25,7 @@ const tabFromHash = (): Tab => {
 
 export function App({ services }: { services: Services }) {
   const [user, setUser] = useState<string | null | undefined>(undefined);
+  const [queryClient] = useState(createQueryClient);
 
   useEffect(() => {
     services.auth.currentUser().then(setUser, () => setUser(null));
@@ -33,15 +36,19 @@ export function App({ services }: { services: Services }) {
 
   // Everything the user can see lives inside Shell, so signing out unmounts and discards it.
   return (
-    <Shell
-      key={user}
-      services={services}
-      email={user}
-      onSignOut={async () => {
-        await services.auth.signOut();
-        setUser(null);
-      }}
-    />
+    <QueryClientProvider client={queryClient}>
+      <Shell
+        key={user}
+        services={services}
+        email={user}
+        onSignOut={async () => {
+          await services.auth.signOut();
+          // Never let the next person to sign in see this user's cached data.
+          queryClient.clear();
+          setUser(null);
+        }}
+      />
+    </QueryClientProvider>
   );
 }
 
@@ -55,32 +62,20 @@ function Shell({
   onSignOut: () => void;
 }) {
   const [hashTab, setTab] = useState<Tab>(tabFromHash);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const queryClient = useQueryClient();
+  const me = useMe(services.api);
   // Only the server enforces admin; this just hides the tab from everyone else.
+  const isAdmin = me.data?.isAdmin ?? false;
   const tabs = TABS.filter((t) => t.id !== 'admin' || isAdmin);
   const tab: Tab = tabs.some((t) => t.id === hashTab) ? hashTab : 'checkouts';
 
-  useEffect(() => {
-    services.api.getMe().then(
-      (me) => setIsAdmin(me.isAdmin),
-      () => setIsAdmin(false),
-    );
-  }, [services]);
-  const [data, setData] = useState<LoansResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setData(await services.api.getLoans());
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [services]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const loans = useLoans(services.api);
+  const data = loans.data ?? null;
+  const error = loans.error?.message ?? null;
+  const load = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: keys.loans }),
+    [queryClient],
+  );
 
   // Pages slide in from the side the new tab sits on, like the glass indicator moving there.
   const index = tabs.findIndex((t) => t.id === tab);
