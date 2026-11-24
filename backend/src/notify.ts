@@ -7,6 +7,7 @@ import {
   localDate,
   matchItems,
 } from './lib/notify-logic.js';
+import { dataOwner } from './lib/links.js';
 import { createPusher, type Pusher } from './lib/push.js';
 
 /** Runs hourly: sends one grouped push to each user whose delivery slot is now. */
@@ -19,9 +20,11 @@ export async function runNotify(deps: { repo: Repo; pusher: Pusher; now?: () => 
     const state = await deps.repo.getState(sub);
     if (state.lastSlot === slot) continue; // at most one send per slot
 
+    // Linked users are alerted about the shared cards, using their own settings and devices.
+    const owner = await dataOwner(deps.repo, sub);
     const [loans, accounts, subs] = await Promise.all([
-      deps.repo.listLoans(sub),
-      deps.repo.listAccounts(sub),
+      deps.repo.listLoans(owner),
+      deps.repo.listAccounts(owner),
       deps.repo.listSubs(sub),
     ]);
     const matches = matchItems(prefs, loans, accounts, localDate(now, prefs.timeZone));

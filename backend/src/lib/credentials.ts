@@ -12,6 +12,8 @@ export interface CredentialStore {
   get(sub: string, accountId: string): Promise<Credentials>;
   put(sub: string, accountId: string, creds: Credentials): Promise<void>;
   delete(sub: string, accountId: string): Promise<void>;
+  /** Re-files a card's credentials under another user. */
+  move(from: string, to: string, accountId: string): Promise<void>;
   /** Removes every credential the user owns. */
   deleteAll(sub: string): Promise<void>;
 }
@@ -51,6 +53,10 @@ export class SsmCredentialStore implements CredentialStore {
       if ((e as Error).name !== 'ParameterNotFound') throw e;
     }
   }
+  async move(from: string, to: string, accountId: string) {
+    await this.put(to, accountId, await this.get(from, accountId));
+    await this.delete(from, accountId);
+  }
   async deleteAll(sub: string) {
     if (!/^[A-Za-z0-9-]+$/.test(sub)) throw new Error('Invalid user id');
     let NextToken: string | undefined;
@@ -82,6 +88,10 @@ export class MemoryCredentialStore implements CredentialStore {
   }
   async delete(sub: string, id: string) {
     this.map.delete(credentialPath(sub, id));
+  }
+  async move(from: string, to: string, id: string) {
+    await this.put(to, id, await this.get(from, id));
+    await this.delete(from, id);
   }
   async deleteAll(sub: string) {
     const prefix = `/neverdue/users/${sub}/`;

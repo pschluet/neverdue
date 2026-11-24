@@ -20,6 +20,15 @@ export interface StoredLoan extends Loan {
 }
 
 /**
+ * Two linked users share one set of cards and checkouts, stored under `owner`'s sub. Each user
+ * keeps their own alert settings and devices. The same record is stored under both users.
+ */
+export interface Link {
+  partner: string;
+  owner: string;
+}
+
+/**
  * Every method takes the owner's `sub` first and every key is built from it, so a call can
  * only ever reach that user's records.
  */
@@ -35,6 +44,12 @@ export interface Repo {
   getPrefs(sub: string): Promise<Prefs | undefined>;
   putPrefs(sub: string, prefs: Prefs): Promise<void>;
   listAllPrefs(): Promise<{ sub: string; prefs: Prefs }[]>;
+  getLink(sub: string): Promise<Link | undefined>;
+  putLink(sub: string, link: Link): Promise<void>;
+  deleteLink(sub: string): Promise<void>;
+  listAllLinks(): Promise<{ sub: string; link: Link }[]>;
+  /** Moves a card and its checkouts from one user to another. */
+  moveAccount(from: string, to: string, id: string): Promise<void>;
   getState(sub: string): Promise<UserState>;
   putState(sub: string, state: UserState): Promise<void>;
   listSubs(sub: string): Promise<PushSub[]>;
@@ -97,6 +112,26 @@ export class MemoryRepo implements Repo {
   }
   async listAllPrefs() {
     return this.scan<Prefs>(undefined, 'PREFS').map((x) => ({ sub: x.sub, prefs: x.v }));
+  }
+  async getLink(sub: string) {
+    return this.scan<Link>(sub, 'LINK')[0]?.v;
+  }
+  async putLink(sub: string, l: Link) {
+    this.put(sub, 'LINK', l);
+  }
+  async deleteLink(sub: string) {
+    this.items.delete(this.key(sub, 'LINK'));
+  }
+  async listAllLinks() {
+    return this.scan<Link>(undefined, 'LINK').map((x) => ({ sub: x.sub, link: x.v }));
+  }
+  async moveAccount(from: string, to: string, id: string) {
+    const account = await this.getAccount(from, id);
+    if (!account) return;
+    const loans = this.scan<StoredLoan>(from, `LOAN#${id}#`);
+    this.put(to, `ACCOUNT#${id}`, account);
+    for (const l of loans) this.put(to, l.sk, l.v);
+    await this.deleteAccount(from, id);
   }
   async getState(sub: string) {
     return this.scan<UserState>(sub, 'STATE')[0]?.v ?? {};
@@ -254,6 +289,34 @@ export class DynamoRepo implements Repo {
       sub: String(i.pk).slice(5),
       prefs: i.data as Prefs,
     }));
+  }
+  getLink(sub: string) {
+    return this.get<Link>(sub, 'LINK');
+  }
+  async putLink(sub: string, l: Link) {
+    await this.put(sub, 'LINK', l, { gsi1pk: 'LINK', gsi1sk: `USER#${sub}` });
+  }
+  async deleteLink(sub: string) {
+    await this.del(sub, 'LINK');
+  }
+  async listAllLinks() {
+    return (await this.queryIndex('LINK')).map((i) => ({
+      sub: String(i.pk).slice(5),
+      link: i.data as Link,
+    }));
+  }
+  async moveAccount(from: string, to: string, id: string) {
+    const account = await this.getAccount(from, id);
+    if (!account) return;
+    const loans = await this.query(from, `LOAN#${id}#`);
+    // Copy first, delete after: a failure part-way leaves the card in both places, never neither.
+    await this.putAccount(to, account);
+    await this.batch(
+      loans.map((l) => ({
+        PutRequest: { Item: { pk: `USER#${to}`, sk: l.sk, data: l.data } },
+      })),
+    );
+    await this.deleteAccount(from, id);
   }
   async getState(sub: string) {
     return (await this.get<UserState>(sub, 'STATE')) ?? {};

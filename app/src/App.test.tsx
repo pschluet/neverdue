@@ -163,4 +163,37 @@ describe('App', () => {
     await userEvent.click(within(sam).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(screen.queryByText('sam@example.com')).not.toBeInTheDocument());
   });
+
+  it('lets the admin link two users and unlink them, choosing who keeps the cards', async () => {
+    const s = createMockServices();
+    await s.auth.requestCode('paul@paulschlueter.com');
+    await s.auth.confirmCode('123456');
+    render(<App services={s} />);
+    await userEvent.click(await screen.findByRole('link', { name: /Admin/ }));
+    await screen.findAllByTestId('user');
+    const row = (email: string) =>
+      screen
+        .getAllByTestId('user')
+        .find((li) => within(li).queryByText(email, { selector: 'strong' }))!;
+
+    await userEvent.click(
+      within(row('paul@paulschlueter.com')).getByRole('button', { name: /Link to another user/ }),
+    );
+    await userEvent.selectOptions(screen.getByLabelText(/Link paul@paulschlueter.com with/), [
+      'sam@example.com',
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: 'Link' }));
+    expect(
+      await within(row('sam@example.com')).findByText('Linked with paul@paulschlueter.com'),
+    ).toBeInTheDocument();
+    expect(within(row('paul@paulschlueter.com')).getByText(/3 cards/)).toBeInTheDocument();
+    expect(within(row('sam@example.com')).getByText(/3 cards/)).toBeInTheDocument();
+
+    await userEvent.click(within(row('sam@example.com')).getByRole('button', { name: 'Unlink…' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'sam@example.com' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    await waitFor(() => expect(screen.queryByTestId('linked')).not.toBeInTheDocument());
+    expect(within(row('sam@example.com')).getByText(/3 cards/)).toBeInTheDocument();
+    expect(within(row('paul@paulschlueter.com')).getByText(/0 cards/)).toBeInTheDocument();
+  });
 });
