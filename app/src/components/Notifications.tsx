@@ -12,6 +12,8 @@ export function Notifications({ api, push }: { api: Api; push: PushService }) {
   const [draft, setDraft] = useState<Prefs | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // What's typed in the days field, so it can be empty mid-edit; null shows the saved value.
+  const [daysText, setDaysText] = useState<string | null>(null);
   const [actionError, setError] = useState<string | null>(null);
   const error = actionError ?? server.error?.message ?? null;
   const status = push.status();
@@ -97,6 +99,7 @@ export function Notifications({ api, push }: { api: Api; push: PushService }) {
           try {
             await putPrefs(prefs);
             setDraft(null);
+            setDaysText(null);
             setMsg('Saved');
           } catch (err) {
             setError((err as Error).message);
@@ -121,30 +124,39 @@ export function Notifications({ api, push }: { api: Api; push: PushService }) {
           />
         </label>
         <label className="switch-row">
-          <span>Books due within…</span>
-          <span className="row gap">
-            <input
-              type="checkbox"
-              aria-label="Notify before due date"
-              checked={prefs.triggers.daysBefore !== null}
-              onChange={(e) => setTrig({ daysBefore: e.target.checked ? 2 : null })}
-            />
-            {prefs.triggers.daysBefore !== null && (
-              <input
-                className="narrow"
-                type="number"
-                min={1}
-                max={30}
-                aria-label="Days before due"
-                value={prefs.triggers.daysBefore}
-                onChange={(e) =>
-                  setTrig({ daysBefore: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })
-                }
-              />
-            )}
-            {prefs.triggers.daysBefore !== null && <span className="muted">day(s)</span>}
-          </span>
+          <span>Books due soon</span>
+          <input
+            type="checkbox"
+            aria-label="Notify before due date"
+            checked={prefs.triggers.daysBefore !== null}
+            onChange={(e) => {
+              setDaysText(null);
+              setTrig({ daysBefore: e.target.checked ? 2 : null });
+            }}
+          />
         </label>
+        {prefs.triggers.daysBefore !== null && (
+          <div className="sub-row">
+            <span>Within</span>
+            <input
+              className="narrow"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={30}
+              aria-label="Days before due"
+              value={daysText ?? String(prefs.triggers.daysBefore)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDaysText(v);
+                const n = parseInt(v, 10);
+                if (Number.isFinite(n) && n > 0) setTrig({ daysBefore: Math.min(30, n) });
+              }}
+              onBlur={() => setDaysText(null)}
+            />
+            <span>{prefs.triggers.daysBefore === 1 ? 'day' : 'days'}</span>
+          </div>
+        )}
         <label className="switch-row">
           <span>New fees</span>
           <input

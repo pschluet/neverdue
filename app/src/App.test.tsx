@@ -77,6 +77,21 @@ describe('Notifications', () => {
     expect(put.mock.calls[0]![0].triggers).toMatchObject({ overdue: true, daysBefore: 2 });
   });
 
+  it('lets the days field be cleared and retyped', async () => {
+    const s = await signedIn();
+    const put = vi.spyOn(s.api, 'putPrefs');
+    render(withQuery(<Notifications api={s.api} push={s.push} />));
+    await userEvent.click(await screen.findByLabelText('Notify before due date'));
+    const days = screen.getByLabelText('Days before due');
+    await userEvent.clear(days);
+    expect(days).toHaveValue(null);
+    await userEvent.type(days, '14');
+    expect(days).toHaveValue(14);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0]![0].triggers).toMatchObject({ daysBefore: 14 });
+  });
+
   it('shows the Add to Home Screen hint when push needs an installed app', async () => {
     const s = await signedIn();
     s.push.status = () => 'needs-install';
