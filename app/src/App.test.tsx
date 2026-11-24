@@ -132,4 +132,35 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Library cards' })).toBeInTheDocument();
     expect(screen.getByText(/•••• 4821/)).toBeInTheDocument();
   });
+
+  it('hides the Admin tab from regular users', async () => {
+    const s = await signedIn();
+    render(<App services={s} />);
+    await screen.findByText(/The Overstory/);
+    expect(screen.queryByRole('link', { name: /Admin/ })).not.toBeInTheDocument();
+    window.location.hash = '#/admin';
+    await waitFor(() => expect(screen.getByText(/The Overstory/)).toBeInTheDocument());
+  });
+
+  it('lets the admin invite, disable and delete users', async () => {
+    const s = createMockServices();
+    await s.auth.requestCode('paul@paulschlueter.com');
+    await s.auth.confirmCode('123456');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App services={s} />);
+    await userEvent.click(await screen.findByRole('link', { name: /Admin/ }));
+    expect(await screen.findAllByTestId('user')).toHaveLength(4);
+    expect(screen.getByText('(you)')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Email'), 'new@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Invite' }));
+    expect(await screen.findByText('new@example.com')).toBeInTheDocument();
+
+    const sam = screen.getByText('sam@example.com').closest('li')!;
+    await userEvent.click(within(sam).getByRole('button', { name: 'Disable' }));
+    expect(await within(sam).findByText('Disabled')).toBeInTheDocument();
+
+    await userEvent.click(within(sam).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByText('sam@example.com')).not.toBeInTheDocument());
+  });
 });

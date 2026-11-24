@@ -1,4 +1,14 @@
-import type { Account, Api, Auth, Loan, Prefs, PushService, RenewResult, Services } from '../types';
+import type {
+  Account,
+  AdminUser,
+  Api,
+  Auth,
+  Loan,
+  Prefs,
+  PushService,
+  RenewResult,
+  Services,
+} from '../types';
 
 const iso = (offsetDays: number) => {
   const d = new Date();
@@ -83,19 +93,90 @@ export function createMockServices(): Services {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
   let subscribed = false;
+  let pendingEmail = '';
+  const ADMIN = 'paul@paulschlueter.com';
+  const day = 86400000;
+  let users: AdminUser[] = [
+    {
+      sub: 'u-paul',
+      email: ADMIN,
+      status: 'CONFIRMED',
+      enabled: true,
+      createdAt: new Date(Date.now() - 90 * day).toISOString(),
+      cardCount: 2,
+      isSelf: true,
+    },
+    {
+      sub: 'u-sam',
+      email: 'sam@example.com',
+      status: 'CONFIRMED',
+      enabled: true,
+      createdAt: new Date(Date.now() - 30 * day).toISOString(),
+      cardCount: 1,
+      isSelf: false,
+    },
+    {
+      sub: 'u-alex',
+      email: 'alex@example.com',
+      status: 'FORCE_CHANGE_PASSWORD',
+      enabled: true,
+      createdAt: new Date(Date.now() - 2 * day).toISOString(),
+      cardCount: 0,
+      isSelf: false,
+    },
+    {
+      sub: 'u-riley',
+      email: 'riley@example.com',
+      status: 'CONFIRMED',
+      enabled: false,
+      createdAt: new Date(Date.now() - 60 * day).toISOString(),
+      cardCount: 3,
+      isSelf: false,
+    },
+  ];
   const wait = <T>(v: T) => new Promise<T>((r) => setTimeout(() => r(v), 250));
 
   const auth: Auth = {
     currentUser: async () => user,
-    requestCode: async (email) => void (await wait(email)),
+    requestCode: async (email) => void ((pendingEmail = email.trim()), await wait(email)),
     confirmCode: async (code) => {
       await wait(0);
       if (code !== '123456') throw new Error('That code was not accepted (mock code is 123456)');
-      user = 'you@example.com';
+      user = pendingEmail || 'you@example.com';
     },
     signOut: async () => void (user = null),
   };
   const api: Api = {
+    getMe: () => wait({ email: user ?? '', isAdmin: user?.toLowerCase() === ADMIN }),
+    adminListUsers: () =>
+      wait(
+        structuredClone(users)
+          .map((u) => ({ ...u, isSelf: u.email.toLowerCase() === user?.toLowerCase() }))
+          .sort((a, b) => a.email.localeCompare(b.email)),
+      ),
+    adminInviteUser: async (email) => {
+      const e = email.trim().toLowerCase();
+      if (users.some((u) => u.email === e)) throw new Error('That user already exists');
+      users.push({
+        sub: `u-${Date.now()}`,
+        email: e,
+        status: 'FORCE_CHANGE_PASSWORD',
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        cardCount: 0,
+        isSelf: false,
+      });
+      await wait(0);
+    },
+    adminSetUserEnabled: async (sub, enabled) => {
+      const u = users.find((x) => x.sub === sub);
+      if (u) u.enabled = enabled;
+      await wait(0);
+    },
+    adminDeleteUser: async (sub) => {
+      users = users.filter((u) => u.sub !== sub);
+      await wait(0);
+    },
     getLoans: () => wait({ accounts: structuredClone(accounts), loans: structuredClone(loans) }),
     addAccount: async (input) => {
       const a: Account = {

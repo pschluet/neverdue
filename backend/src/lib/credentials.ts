@@ -1,6 +1,8 @@
 import {
   DeleteParameterCommand,
+  DeleteParametersCommand,
   GetParameterCommand,
+  GetParametersByPathCommand,
   PutParameterCommand,
   SSMClient,
 } from '@aws-sdk/client-ssm';
@@ -10,6 +12,8 @@ export interface CredentialStore {
   get(sub: string, accountId: string): Promise<Credentials>;
   put(sub: string, accountId: string, creds: Credentials): Promise<void>;
   delete(sub: string, accountId: string): Promise<void>;
+  /** Removes every credential the user owns. */
+  deleteAll(sub: string): Promise<void>;
 }
 
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -47,6 +51,23 @@ export class SsmCredentialStore implements CredentialStore {
       if ((e as Error).name !== 'ParameterNotFound') throw e;
     }
   }
+  async deleteAll(sub: string) {
+    if (!/^[A-Za-z0-9-]+$/.test(sub)) throw new Error('Invalid user id');
+    let NextToken: string | undefined;
+    do {
+      const page = await this.ssm.send(
+        new GetParametersByPathCommand({
+          Path: `/neverdue/users/${sub}`,
+          Recursive: true,
+          NextToken,
+        }),
+      );
+      const names = (page.Parameters ?? []).map((p) => p.Name!).filter(Boolean);
+      for (let i = 0; i < names.length; i += 10)
+        await this.ssm.send(new DeleteParametersCommand({ Names: names.slice(i, i + 10) }));
+      NextToken = page.NextToken;
+    } while (NextToken);
+  }
 }
 
 export class MemoryCredentialStore implements CredentialStore {
@@ -61,5 +82,9 @@ export class MemoryCredentialStore implements CredentialStore {
   }
   async delete(sub: string, id: string) {
     this.map.delete(credentialPath(sub, id));
+  }
+  async deleteAll(sub: string) {
+    const prefix = `/neverdue/users/${sub}/`;
+    for (const k of [...this.map.keys()]) if (k.startsWith(prefix)) this.map.delete(k);
   }
 }

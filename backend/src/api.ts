@@ -10,11 +10,15 @@ import { DynamoRepo, type Repo } from './lib/db.js';
 import { createLibraryClient } from './lib/library/client.js';
 import { storeSnapshot } from './lib/refresh.js';
 import { type LibraryClient, LoginError, DEFAULT_PREFS } from './lib/types.js';
+import { CognitoUserDirectory, UserExistsError, type UserDirectory } from './lib/users.js';
 
 export interface ApiDeps {
   repo: Repo;
   creds: CredentialStore;
   library: LibraryClient;
+  users: UserDirectory;
+  /** Emails (any case) allowed to use /api/admin/*. */
+  adminEmails: string[];
   /** Fire-and-forget invocation of the scraper Lambda. */
   invokeScraper(payload: { sub: string; accountId?: string }): Promise<void>;
   now?: () => Date;
@@ -54,6 +58,8 @@ const subInput = z.object({
   endpoint: z.string().url().startsWith('https://'),
   keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
 });
+const inviteInput = z.object({ email: z.string().trim().toLowerCase().email().max(254) });
+const userPatch = z.object({ enabled: z.boolean() });
 const renewInput = z.object({ checkoutIds: z.array(z.string().min(1)).min(1).max(100) });
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyStructuredResultV2 => ({
@@ -103,6 +109,61 @@ export function createApi(deps: ApiDeps) {
       json(400, { error: 'Invalid request', details: e.issues.map((i) => i.path.join('.')) });
 
     const [root, id, action] = parts;
+
+    const email = event.requestContext.authorizer?.jwt?.claims?.email;
+    const isAdmin =
+      typeof email === 'string' &&
+      deps.adminEmails.some((a) => a.trim().toLowerCase() === email.toLowerCase());
+
+    if (root === 'me' && method === 'GET' && !id) {
+      return json(200, { email: typeof email === 'string' ? email : '', isAdmin });
+    }
+
+    if (root === 'admin') {
+      if (!isAdmin) return json(403, { error: 'Forbidden' });
+      if (id !== 'users') return notFound();
+      const target = action;
+      if (!target && method === 'GET') {
+        const [users, accounts] = await Promise.all([
+          deps.users.list(),
+          deps.repo.listAllAccounts(),
+        ]);
+        const cards = new Map<string, number>();
+        for (const a of accounts) cards.set(a.sub, (cards.get(a.sub) ?? 0) + 1);
+        return json(200, {
+          users: users
+            .map((u) => ({ ...u, cardCount: cards.get(u.sub) ?? 0, isSelf: u.sub === sub }))
+            .sort((a, b) => a.email.localeCompare(b.email)),
+        });
+      }
+      if (!target && method === 'POST') {
+        const p = inviteInput.safeParse(body);
+        if (!p.success) return bad(p.error);
+        try {
+          return json(201, { user: await deps.users.create(p.data.email) });
+        } catch (e) {
+          if (e instanceof UserExistsError) return json(409, { error: 'That user already exists' });
+          throw e;
+        }
+      }
+      if (target) {
+        if (target === sub) return json(400, { error: "You can't change your own account here" });
+        if (method === 'PATCH') {
+          const p = userPatch.safeParse(body);
+          if (!p.success) return bad(p.error);
+          await deps.users.setEnabled(target, p.data.enabled);
+          return json(200, { ok: true });
+        }
+        if (method === 'DELETE') {
+          // Data first: if Cognito deletion fails the user can still be retried, never orphaned.
+          await deps.repo.deleteUser(target);
+          await deps.creds.deleteAll(target);
+          await deps.users.delete(target);
+          return json(200, { ok: true });
+        }
+      }
+      return notFound();
+    }
 
     if (root === 'loans' && method === 'GET' && !id) {
       const [accounts, loans, state] = await Promise.all([
@@ -258,6 +319,8 @@ export const handler = (event: APIGatewayProxyEventV2WithJWTAuthorizer) => {
     repo: new DynamoRepo(process.env.TABLE_NAME!),
     creds: new SsmCredentialStore(),
     library: createLibraryClient(),
+    users: new CognitoUserDirectory(process.env.USER_POOL_ID!),
+    adminEmails: (process.env.ADMIN_EMAILS ?? '').split(',').filter(Boolean),
     async invokeScraper(payload) {
       await new LambdaClient({}).send(
         new InvokeCommand({

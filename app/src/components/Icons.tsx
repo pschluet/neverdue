@@ -40,3 +40,10 @@ export const BellIcon = () => (
     <path d="M10 20.5a2.2 2.2 0 0 0 4 0" />
   </Icon>
 );
+
+export const ShieldIcon = () => (
+  <Icon>
+    <path d="M12 3.5 5 6v5.5c0 4.2 2.8 7.3 7 9 4.2-1.7 7-4.8 7-9V6l-7-2.5Z" />
+    <path d="m9 12 2.2 2.2L15.2 10" />
+  </Icon>
+);

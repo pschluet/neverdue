@@ -2,16 +2,18 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Accounts } from './components/Accounts';
 import { Checkouts } from './components/Checkouts';
-import { BellIcon, BooksIcon, CardIcon } from './components/Icons';
+import { Admin } from './components/Admin';
+import { BellIcon, BooksIcon, CardIcon, ShieldIcon } from './components/Icons';
 import { Notifications } from './components/Notifications';
 import { SignIn } from './components/SignIn';
 import type { LoansResponse, Services } from './types';
 
-type Tab = 'checkouts' | 'accounts' | 'notifications';
+type Tab = 'checkouts' | 'accounts' | 'notifications' | 'admin';
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'checkouts', label: 'Checkouts', icon: <BooksIcon /> },
   { id: 'accounts', label: 'Cards', icon: <CardIcon /> },
   { id: 'notifications', label: 'Alerts', icon: <BellIcon /> },
+  { id: 'admin', label: 'Admin', icon: <ShieldIcon /> },
 ];
 
 const tabFromHash = (): Tab => {
@@ -52,7 +54,18 @@ function Shell({
   email: string;
   onSignOut: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>(tabFromHash);
+  const [hashTab, setTab] = useState<Tab>(tabFromHash);
+  const [isAdmin, setIsAdmin] = useState(false);
+  // Only the server enforces admin; this just hides the tab from everyone else.
+  const tabs = TABS.filter((t) => t.id !== 'admin' || isAdmin);
+  const tab: Tab = tabs.some((t) => t.id === hashTab) ? hashTab : 'checkouts';
+
+  useEffect(() => {
+    services.api.getMe().then(
+      (me) => setIsAdmin(me.isAdmin),
+      () => setIsAdmin(false),
+    );
+  }, [services]);
   const [data, setData] = useState<LoansResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,7 +83,7 @@ function Shell({
   }, [load]);
 
   // Pages slide in from the side the new tab sits on, like the glass indicator moving there.
-  const index = TABS.findIndex((t) => t.id === tab);
+  const index = tabs.findIndex((t) => t.id === tab);
   const prevIndex = useRef(index);
   const direction =
     index === prevIndex.current ? 'none' : index > prevIndex.current ? 'right' : 'left';
@@ -102,12 +115,13 @@ function Shell({
           {tab === 'checkouts' && <Checkouts data={data} api={services.api} reload={load} />}
           {tab === 'accounts' && <Accounts data={data} api={services.api} reload={load} />}
           {tab === 'notifications' && <Notifications api={services.api} push={services.push} />}
+          {tab === 'admin' && <Admin api={services.api} />}
         </div>
       </main>
       <nav className="tabbar glass" aria-label="Sections">
-        <div className="tabs" style={{ '--i': index } as React.CSSProperties}>
+        <div className="tabs" style={{ '--i': index, '--n': tabs.length } as React.CSSProperties}>
           <span className="indicator" aria-hidden="true" />
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <a
               key={t.id}
               href={`#/${t.id}`}

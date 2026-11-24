@@ -12,7 +12,8 @@
       "vapidPublicKey": "BAzVnZhw6rQQCIVU6JeRcBSPTFv_aFYrk774M3FPektBBGPjcWZQes9TRcLDTkSpwlUZ5C4vXiHWNaL9CbQLhiU",
       "oidcProviderArn": "arn:aws:iam::435432815368:oidc-provider/token.actions.githubusercontent.com",
       "sesFromEmail": "no-reply@pauldev.io",
-      "sesDomain": "pauldev.io"
+      "sesDomain": "pauldev.io",
+      "adminEmails": ["paul@paulschlueter.com"]
     }
   }
 }

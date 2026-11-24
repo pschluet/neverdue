@@ -29,6 +29,8 @@ export interface NeverdueConfig {
   oidcProviderArn: string;
   sesFromEmail: string;
   sesDomain: string;
+  /** Emails allowed to use the in-app admin screen. */
+  adminEmails: string[];
 }
 
 const backend = (file: string) =>
@@ -107,7 +109,12 @@ export class NeverdueStack extends cdk.Stack {
       ...common,
       entry: backend('api.ts'),
       timeout: cdk.Duration.seconds(29),
-      environment: { TABLE_NAME: table.tableName, SCRAPER_FUNCTION_NAME: scraper.functionName },
+      environment: {
+        TABLE_NAME: table.tableName,
+        SCRAPER_FUNCTION_NAME: scraper.functionName,
+        USER_POOL_ID: userPool.userPoolId,
+        ADMIN_EMAILS: c.adminEmails.join(','),
+      },
     });
     const notifier = new NodejsFunction(this, 'Notifier', {
       ...common,
@@ -130,6 +137,32 @@ export class NeverdueStack extends cdk.Stack {
           'ssm:AddTagsToResource',
         ],
         resources: [userPaths],
+      }),
+    );
+    // Admin screen: remove a user's stored library credentials, and manage Cognito users.
+    api.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParametersByPath', 'ssm:DeleteParameters'],
+        resources: [
+          userPaths,
+          this.formatArn({
+            service: 'ssm',
+            resource: 'parameter',
+            resourceName: 'neverdue/users',
+          }),
+        ],
+      }),
+    );
+    api.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'cognito-idp:ListUsers',
+          'cognito-idp:AdminCreateUser',
+          'cognito-idp:AdminDeleteUser',
+          'cognito-idp:AdminDisableUser',
+          'cognito-idp:AdminEnableUser',
+        ],
+        resources: [userPool.userPoolArn],
       }),
     );
     scraper.addToRolePolicy(
