@@ -81,7 +81,7 @@ function AccountRow({ account, api, run }: { account: Account; api: Api; run: Ru
             Rename
           </button>
           <button
-            className="btn small"
+            className={account.needsAttention ? 'btn small primary' : 'btn small'}
             onClick={() => {
               setValue('');
               setMode('pin');

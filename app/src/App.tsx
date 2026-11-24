@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Accounts } from './components/Accounts';
 import { Checkouts } from './components/Checkouts';
+import { BellIcon, BooksIcon, CardIcon } from './components/Icons';
 import { Notifications } from './components/Notifications';
 import { SignIn } from './components/SignIn';
 import type { LoansResponse, Services } from './types';
 
 type Tab = 'checkouts' | 'accounts' | 'notifications';
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'checkouts', label: 'Checkouts', icon: '📚' },
-  { id: 'accounts', label: 'Cards', icon: '💳' },
-  { id: 'notifications', label: 'Alerts', icon: '🔔' },
+const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
+  { id: 'checkouts', label: 'Checkouts', icon: <BooksIcon /> },
+  { id: 'accounts', label: 'Cards', icon: <CardIcon /> },
+  { id: 'notifications', label: 'Alerts', icon: <BellIcon /> },
 ];
 
 const tabFromHash = (): Tab => {
@@ -67,6 +69,15 @@ function Shell({
     void load();
   }, [load]);
 
+  // Pages slide in from the side the new tab sits on, like the glass indicator moving there.
+  const index = TABS.findIndex((t) => t.id === tab);
+  const prevIndex = useRef(index);
+  const direction =
+    index === prevIndex.current ? 'none' : index > prevIndex.current ? 'right' : 'left';
+  useEffect(() => {
+    prevIndex.current = index;
+  }, [index]);
+
   useEffect(() => {
     const onHash = () => setTab(tabFromHash());
     window.addEventListener('hashchange', onHash);
@@ -87,22 +98,27 @@ function Shell({
             {error}
           </div>
         )}
-        {tab === 'checkouts' && <Checkouts data={data} api={services.api} reload={load} />}
-        {tab === 'accounts' && <Accounts data={data} api={services.api} reload={load} />}
-        {tab === 'notifications' && <Notifications api={services.api} push={services.push} />}
+        <div key={tab} className="page" data-from={direction}>
+          {tab === 'checkouts' && <Checkouts data={data} api={services.api} reload={load} />}
+          {tab === 'accounts' && <Accounts data={data} api={services.api} reload={load} />}
+          {tab === 'notifications' && <Notifications api={services.api} push={services.push} />}
+        </div>
       </main>
       <nav className="tabbar glass" aria-label="Sections">
-        {TABS.map((t) => (
-          <a
-            key={t.id}
-            href={`#/${t.id}`}
-            className={t.id === tab ? 'tab active' : 'tab'}
-            aria-current={t.id === tab ? 'page' : undefined}
-          >
-            <span aria-hidden>{t.icon}</span>
-            {t.label}
-          </a>
-        ))}
+        <div className="tabs" style={{ '--i': index } as React.CSSProperties}>
+          <span className="indicator" aria-hidden="true" />
+          {TABS.map((t) => (
+            <a
+              key={t.id}
+              href={`#/${t.id}`}
+              className={t.id === tab ? 'tab active' : 'tab'}
+              aria-current={t.id === tab ? 'page' : undefined}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </a>
+          ))}
+        </div>
       </nav>
     </div>
   );
