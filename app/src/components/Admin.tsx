@@ -56,6 +56,7 @@ export function Admin({ api }: { api: Api }) {
           {error}
         </div>
       )}
+      <Invite api={api} run={run} />
       {users === null ? (
         <p className="muted">Loading…</p>
       ) : (
@@ -96,7 +97,6 @@ export function Admin({ api }: { api: Api }) {
           ))}
         </ul>
       )}
-      <Invite api={api} run={run} />
     </section>
   );
 }
