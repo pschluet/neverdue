@@ -1,0 +1,18 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "context": {
+    "neverdue": {
+      "domainName": "neverdue.pauldev.io",
+      "hostedZoneId": "Z0005541NUHRO213TE6L",
+      "hostedZoneName": "pauldev.io",
+      "certificateArn": "arn:aws:acm:us-east-1:435432815368:certificate/e2fec70c-b80c-4143-b853-105c118d4749",
+      "githubRepo": "pschluet/neverdue",
+      "scrapeCron": "cron(0 6 * * ? *)",
+      "scheduleTimeZone": "America/Chicago",
+      "vapidPublicKey": "BAzVnZhw6rQQCIVU6JeRcBSPTFv_aFYrk774M3FPektBBGPjcWZQes9TRcLDTkSpwlUZ5C4vXiHWNaL9CbQLhiU",
+      "oidcProviderArn": "arn:aws:iam::435432815368:oidc-provider/token.actions.githubusercontent.com",
+      "sesFromEmail": "no-reply@pauldev.io",
+      "sesDomain": "pauldev.io"
+    }
+  }
+}

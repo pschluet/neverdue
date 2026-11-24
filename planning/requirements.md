@@ -13,6 +13,14 @@ It will also allow the user to renew checkouts on books.
 - When scraping https://palatinelibrary.bibliocommons.com, the preferred route is to use public APIs, if available. If not, use undocumented APIs. Least preferable is to actually scrape rendered html.
 - The scraping job that checks due dates on all of the accounts runs once per day and caches data in the app database.
 
+# Tests
+- The app will have unit tests for the front-end app, the backend api, and the infra/CDK code.
+
+# CI/CD Pipeline
+- Use GitHub actions for the CI/CD pipeline
+- CI should include formatting, linting, running tests, and building.
+- CD should deploy the CDK stack (there's only one environment - production)
+
 # Design
 - Use the Apple Liquid Glass design system (https://developer.apple.com/documentation/technologyoverviews/liquid-glass) for the UI
 
