@@ -249,7 +249,7 @@ function Unlink({
           { sub: user.sub, email: user.email },
           { sub: partner.sub, email: partner.email },
         ].map((o) => (
-          <label key={o.sub} className="row gap">
+          <label key={o.sub} className="radio-row">
             <input
               type="radio"
               name={`keeper-${user.sub}`}
