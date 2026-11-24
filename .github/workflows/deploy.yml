@@ -1,0 +1,52 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint && npm run typecheck && npm test
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Deploy CDK stack
+        run: npm run deploy -w infra -- --outputs-file ../cdk-outputs.json
+      - name: Read stack outputs
+        id: out
+        run: |
+          for k in SiteBucketName DistributionId UserPoolId UserPoolClientId; do
+            echo "$k=$(jq -r ".NeverdueStack.$k" cdk-outputs.json)" >> "$GITHUB_OUTPUT"
+          done
+          echo "VAPID=$(jq -r '.context.neverdue.vapidPublicKey' infra/cdk.json)" >> "$GITHUB_OUTPUT"
+      - name: Build app
+        run: npm run build -w app
+        env:
+          VITE_USER_POOL_ID: ${{ steps.out.outputs.UserPoolId }}
+          VITE_USER_POOL_CLIENT_ID: ${{ steps.out.outputs.UserPoolClientId }}
+          VITE_VAPID_PUBLIC_KEY: ${{ steps.out.outputs.VAPID }}
+      - name: Upload site
+        run: |
+          B=s3://${{ steps.out.outputs.SiteBucketName }}
+          aws s3 sync app/dist "$B" --delete --exclude index.html --exclude sw.js --exclude manifest.webmanifest \
+            --cache-control "public,max-age=31536000,immutable"
+          for f in index.html sw.js manifest.webmanifest; do
+            aws s3 cp "app/dist/$f" "$B/$f" --cache-control "no-cache"
+          done
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id ${{ steps.out.outputs.DistributionId }} --paths "/*"

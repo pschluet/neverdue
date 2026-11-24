@@ -76,8 +76,10 @@ The app and the API share one origin through CloudFront, so there's no CORS to c
   4. Kick off a refresh of that account.
 - **Deleting a library account** deletes its SSM parameter, its metadata and its loans.
 - **Manual refresh** invokes the scraper Lambda **asynchronously** (`InvocationType: Event`) with the caller's `sub`, so the scraper only processes that user's accounts. Rate-limit it per user (for example once every 5 minutes) so nobody can hammer the library site.
-- The API Lambda can **write and delete** credential parameters but **cannot read them** (no `ssm:GetParameter`), so a bug in the API can't leak credentials.
-- Memory 256 MB, timeout 15 s. Allow enough time for the test sign-in.
+- **Renew:** `POST /api/accounts/{id}/renew` checks the checkout IDs belong to that account, signs in with the stored credentials, renews, re-fetches the snapshot and returns per-item results. A failed renewal is still an HTTP 200 from the library, so the client reads `failures`.
+- **Preferences:** `GET`/`PUT /api/prefs` store the user's notification triggers, frequency, hour and time zone.
+- The API Lambda can **read, write and delete** credential parameters under `/neverdue/users/*`, because it signs in to validate and renew. (Revised from the earlier write-only design.)
+- Memory 256 MB, timeout 29 s. Allow enough time for sign-in plus renew.
 
 ### Scraper: `backend/src/scrape.ts`
 - **Daily run:** triggered by **EventBridge Scheduler** with a cron in the `America/Chicago` time zone (for example 7:00 AM; make it configurable). It processes every registered library account, for all users.
@@ -88,11 +90,15 @@ The app and the API share one origin through CloudFront, so there's no CORS to c
   3. Call the library's JSON API for current checkouts.
   4. Normalize the results and write them to DynamoDB under the account's owner, replacing that account's previous snapshot so returned books disappear.
 - **Concurrency:** process accounts with bounded concurrency (for example 3 at a time). Process them **independently**: a failure on one account is recorded on that account (shown in the UI as "couldn't refresh *name*") and doesn't stop the others.
-- **Notifications, per user:** collect that user's overdue items and items due within a configurable window (default 2 days). Send **one summarized notification to each of that user's devices**, not one per book.
-- **Don't send repeats:** only notify a user again if their set of overdue or due-soon items has changed since their last notification, or once a day while anything is overdue.
-- Send with the `web-push` npm package using VAPID keys. When a push service answers **404 or 410**, delete that subscription.
+- Notifications are sent by a separate **notifier Lambda** (`backend/src/notify.ts`), not the scraper.
 - No headless browser and no container image: a normal `NodejsFunction`. Memory 256 MB, timeout 5 minutes, which leaves plenty of room as accounts are added.
 - Never log credentials, session cookies or full response bodies.
+
+### Notifier: `backend/src/notify.ts`
+- Runs **hourly** from a second EventBridge Scheduler entry (`America/Chicago`). It reads only cached data.
+- For each user with saved preferences, it checks whether the current hour in the user's own time zone matches their chosen hour (and weekday, for weekly). At most one send per slot, tracked in the user's state item.
+- It matches the user's loans and fees against their triggers (overdue, due today, within N days, fees) and sends **one grouped notification to each of that user's devices**. Nothing is sent when nothing matches.
+- Send with the `web-push` npm package using VAPID keys. When a push service answers **404 or 410**, delete that subscription.
 
 ### Data: DynamoDB
 - **One on-demand table**, using a single-table design (`pk`/`sk`), with `RemovalPolicy.RETAIN`.
@@ -109,11 +115,12 @@ The app and the API share one origin through CloudFront, so there's no CORS to c
   - Each parameter holds a small JSON object with the card number and PIN, at the path `/neverdue/users/<sub>/accounts/<accountId>`.
   - The API Lambda creates and deletes them when users add or remove library accounts. Build the path from the JWT `sub` on the server, never from client input. Validate `accountId` as a server-generated ID (for example a ULID).
   - **IAM:**
-    - API Lambda: `ssm:PutParameter`, `ssm:DeleteParameter` and `ssm:AddTagsToResource` on `/neverdue/users/*`.
+    - API Lambda: `ssm:GetParameter`, `ssm:PutParameter`, `ssm:DeleteParameter` and `ssm:AddTagsToResource` on `/neverdue/users/*`.
     - Scraper Lambda: `ssm:GetParameter` on `/neverdue/users/*` only.
+    - Notifier Lambda: `ssm:GetParameter` on the VAPID key only.
     - Nothing else gets access.
   - Credentials are never stored in DynamoDB, returned by the API, or sent back to the browser.
-- **VAPID keys:** generate them once with `npx web-push generate-vapid-keys`. Store the private key as a SecureString in SSM at `/neverdue/vapid-private-key`, readable only by the scraper. The public key is not secret: pass it to the front-end build as a Vite env var, and to the scraper as a Lambda environment variable.
+- **VAPID keys:** generate them once with `npx web-push generate-vapid-keys`. Store the private key as a SecureString in SSM at `/neverdue/vapid-private-key`, readable only by the notifier. The public key is not secret: pass it to the front-end build as a Vite env var, and to the scraper as a Lambda environment variable.
 
 ### Auth: Cognito
 - A user pool with **invite-only** app users (`selfSignUpEnabled: false`) and email as the sign-in alias. Once signed in, each user manages their own library accounts.
@@ -166,14 +173,18 @@ Keep the **library client** (sign-in plus fetching checkouts) in its own module,
   - Test that credentials never appear in API responses or logs.
 - **Infra:** use CDK `Template` assertions for the important parts:
   - the JWT authorizer on the API;
-  - the API Lambda has SSM write/delete but no `GetParameter`, and the scraper has `GetParameter` only, both limited to `/neverdue/users/*`;
+  - the API Lambda has SSM read/write/delete and the scraper has `GetParameter` only, both limited to `/neverdue/users/*`; the notifier can read only the VAPID key;
   - the schedule's time zone;
   - no NAT or VPC resources.
+
+## Deploy role bootstrap
+
+The GitHub deploy role is created by this stack, so the **first deploy must be run locally** (`npm run deploy -w infra` with AWS credentials). After that, set the repository variable `AWS_DEPLOY_ROLE_ARN` to the `DeployRoleArn` output and pushes to `main` deploy through OIDC.
 
 ## One-time manual setup (outside CDK)
 
 1. Bootstrap CDK in the account and region, if it isn't already.
 2. Make sure an ACM certificate covering `neverdue.pauldev.io` is issued in us-east-1.
 3. Make sure SES has `pauldev.io` verified, out of the sandbox if users' addresses aren't individually verified.
-4. Generate the VAPID keys and put the private key in SSM at `/neverdue/vapid-private-key`.
+4. Run `npx tsx scripts/put-vapid-key.ts`: it stores the private key in SSM and prints the public key to put in `infra/cdk.json` (`vapidPublicKey`).
 5. After the first deploy, create Cognito users. Each user then adds their own library accounts in the app.
