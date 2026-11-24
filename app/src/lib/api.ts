@@ -19,6 +19,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const httpApi: Api = {
+  getMe: () => call('GET', '/me'),
+  adminListUsers: async () => (await call<{ users: never[] }>('GET', '/admin/users')).users,
+  adminInviteUser: async (email) => void (await call('POST', '/admin/users', { email })),
+  adminSetUserEnabled: async (sub, enabled) =>
+    void (await call('PATCH', `/admin/users/${encodeURIComponent(sub)}`, { enabled })),
+  adminDeleteUser: async (sub) =>
+    void (await call('DELETE', `/admin/users/${encodeURIComponent(sub)}`)),
   getLoans: () => call('GET', '/loans'),
   addAccount: async (input) => (await call<{ account: never }>('POST', '/accounts', input)).account,
   updateAccount: async (id, patch) =>

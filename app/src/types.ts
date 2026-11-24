@@ -47,7 +47,27 @@ export interface PushSubscriptionJson {
   keys: { p256dh: string; auth: string };
 }
 
+export interface Me {
+  email: string;
+  isAdmin: boolean;
+}
+export interface AdminUser {
+  sub: string;
+  email: string;
+  /** Cognito status; FORCE_CHANGE_PASSWORD means invited but never signed in. */
+  status: string;
+  enabled: boolean;
+  createdAt?: string;
+  cardCount: number;
+  isSelf: boolean;
+}
+
 export interface Api {
+  getMe(): Promise<Me>;
+  adminListUsers(): Promise<AdminUser[]>;
+  adminInviteUser(email: string): Promise<void>;
+  adminSetUserEnabled(sub: string, enabled: boolean): Promise<void>;
+  adminDeleteUser(sub: string): Promise<void>;
   getLoans(): Promise<LoansResponse>;
   addAccount(input: { displayName: string; username: string; pin: string }): Promise<Account>;
   updateAccount(id: string, patch: { displayName?: string; pin?: string }): Promise<Account>;

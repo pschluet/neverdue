@@ -23,6 +23,7 @@ beforeAll(() => {
         'arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com',
       sesFromEmail: 'no-reply@example.com',
       sesDomain: 'example.com',
+      adminEmails: ['admin@example.com'],
     },
   });
   template = Template.fromStack(stack);
@@ -84,6 +85,21 @@ describe('NeverdueStack', () => {
       );
       expect(JSON.stringify(ssm)).toContain('parameter/neverdue/users/*');
     }
+  });
+
+  it('lets only the API manage users, scoped to this pool, and tells it who the admins are', () => {
+    const cognito = (fn: string) =>
+      statementsFor(fn).filter((s) => [s.Action].flat().some((a) => a.startsWith('cognito-idp:')));
+    expect(actionsOf(cognito('Api'))).toEqual(
+      expect.arrayContaining(['cognito-idp:AdminCreateUser', 'cognito-idp:AdminDeleteUser']),
+    );
+    expect(JSON.stringify(cognito('Api'))).toContain('UserPool');
+    expect(JSON.stringify(cognito('Api'))).not.toContain('"*"');
+    expect(cognito('Scraper')).toHaveLength(0);
+    expect(cognito('Notifier')).toHaveLength(0);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ ADMIN_EMAILS: 'admin@example.com' }) },
+    });
   });
 
   it('runs the schedules in America/Chicago', () => {

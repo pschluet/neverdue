@@ -40,6 +40,8 @@ export interface Repo {
   listSubs(sub: string): Promise<PushSub[]>;
   putSub(sub: string, s: PushSub): Promise<void>;
   deleteSub(sub: string, endpoint: string): Promise<void>;
+  /** Deletes every record the user owns. */
+  deleteUser(sub: string): Promise<void>;
 }
 
 const subKey = (endpoint: string) => createHash('sha256').update(endpoint).digest('hex');
@@ -111,6 +113,9 @@ export class MemoryRepo implements Repo {
   async deleteSub(sub: string, endpoint: string) {
     this.items.delete(this.key(sub, `PUSHSUB#${subKey(endpoint)}`));
   }
+  async deleteUser(sub: string) {
+    for (const x of this.scan(sub, '')) this.items.delete(this.key(sub, x.sk));
+  }
 }
 
 export class DynamoRepo implements Repo {
@@ -131,8 +136,11 @@ export class DynamoRepo implements Repo {
       const r = await this.doc.send(
         new QueryCommand({
           TableName: this.table,
-          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
-          ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': prefix },
+          // DynamoDB rejects an empty begins_with operand, so an empty prefix means "all".
+          KeyConditionExpression: prefix ? 'pk = :pk AND begins_with(sk, :sk)' : 'pk = :pk',
+          ExpressionAttributeValues: prefix
+            ? { ':pk': `USER#${sub}`, ':sk': prefix }
+            : { ':pk': `USER#${sub}` },
           ExclusiveStartKey,
         }),
       );
@@ -261,5 +269,9 @@ export class DynamoRepo implements Repo {
   }
   async deleteSub(sub: string, endpoint: string) {
     await this.del(sub, `PUSHSUB#${subKey(endpoint)}`);
+  }
+  async deleteUser(sub: string) {
+    const items = await this.query(sub, '');
+    await this.batch(items.map((i) => ({ DeleteRequest: { Key: { pk: i.pk, sk: i.sk } } })));
   }
 }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApi, REFRESH_COOLDOWN_MS } from '../src/api.js';
 import { MemoryCredentialStore } from '../src/lib/credentials.js';
 import { MemoryRepo } from '../src/lib/db.js';
+import { MemoryUserDirectory } from '../src/lib/users.js';
 import { runScrape } from '../src/scrape.js';
 import {
   DEFAULT_PREFS,
@@ -44,21 +45,30 @@ const library: LibraryClient = {
 function setup() {
   const repo = new MemoryRepo();
   const creds = new MemoryCredentialStore();
+  const users = new MemoryUserDirectory();
   const invoked: unknown[] = [];
   let clock = new Date('2026-11-24T12:00:00Z');
   const api = createApi({
     repo,
     creds,
     library,
+    users,
+    adminEmails: ['Admin@Example.com'],
     invokeScraper: async (p) => void invoked.push(p),
     now: () => clock,
   });
-  const call = async (sub: string, method: string, path: string, body?: unknown) => {
+  const call = async (
+    sub: string,
+    method: string,
+    path: string,
+    body?: unknown,
+    email = `${sub}@example.com`,
+  ) => {
     const res = (await api({
       rawPath: path,
       body: body === undefined ? undefined : JSON.stringify(body),
       isBase64Encoded: false,
-      requestContext: { http: { method }, authorizer: { jwt: { claims: { sub } } } },
+      requestContext: { http: { method }, authorizer: { jwt: { claims: { sub, email } } } },
     } as unknown as APIGatewayProxyEventV2WithJWTAuthorizer)) as {
       statusCode: number;
       body: string;
@@ -68,6 +78,7 @@ function setup() {
   return {
     repo,
     creds,
+    users,
     invoked,
     call,
     tick: (ms: number) => (clock = new Date(clock.getTime() + ms)),
@@ -264,5 +275,89 @@ describe('bad credentials', () => {
     const acct = await s.repo.getAccount('u1', id);
     expect(acct?.lastError).toBeDefined();
     expect(acct?.needsAttention).toBeUndefined();
+  });
+
+  describe('admin', () => {
+    const asAdmin = (s: ReturnType<typeof setup>, method: string, path: string, body?: unknown) =>
+      s.call('admin-sub', method, path, body, 'admin@example.com');
+
+    it('reports whether the caller is an admin, ignoring email case', async () => {
+      const s = setup();
+      expect((await asAdmin(s, 'GET', '/api/me')).json).toEqual({
+        email: 'admin@example.com',
+        isAdmin: true,
+      });
+      expect((await s.call('u1', 'GET', '/api/me')).json.isAdmin).toBe(false);
+    });
+
+    it('forbids every admin route for everyone else', async () => {
+      const s = setup();
+      const u = await asAdmin(s, 'POST', '/api/admin/users', { email: 'x@example.com' });
+      const sub = u.json.user.sub as string;
+      for (const [m, p] of [
+        ['GET', '/api/admin/users'],
+        ['POST', '/api/admin/users'],
+        ['PATCH', `/api/admin/users/${sub}`],
+        ['DELETE', `/api/admin/users/${sub}`],
+      ] as const) {
+        expect((await s.call('u1', m, p, { email: 'y@example.com', enabled: false })).status).toBe(
+          403,
+        );
+      }
+      expect(s.users.users).toHaveLength(1);
+      expect(s.users.users[0]!.enabled).toBe(true);
+    });
+
+    it('invites, lists with card counts, disables and re-enables', async () => {
+      const s = setup();
+      const bad = await asAdmin(s, 'POST', '/api/admin/users', { email: 'nope' });
+      expect(bad.status).toBe(400);
+      const inv = await asAdmin(s, 'POST', '/api/admin/users', { email: ' Kid@Example.com ' });
+      expect(inv.status).toBe(201);
+      expect(inv.json.user.email).toBe('kid@example.com');
+      expect(
+        (await asAdmin(s, 'POST', '/api/admin/users', { email: 'kid@example.com' })).status,
+      ).toBe(409);
+      const sub = inv.json.user.sub as string;
+      await s.call(sub, 'POST', '/api/accounts', newAccount);
+
+      const list = await asAdmin(s, 'GET', '/api/admin/users');
+      expect(list.json.users).toMatchObject([{ email: 'kid@example.com', cardCount: 1 }]);
+
+      expect(
+        (await asAdmin(s, 'PATCH', `/api/admin/users/${sub}`, { enabled: false })).status,
+      ).toBe(200);
+      expect(s.users.users[0]!.enabled).toBe(false);
+      await asAdmin(s, 'PATCH', `/api/admin/users/${sub}`, { enabled: true });
+      expect(s.users.users[0]!.enabled).toBe(true);
+    });
+
+    it("deletes a user's data and credentials but nobody else's", async () => {
+      const s = setup();
+      const a = (await asAdmin(s, 'POST', '/api/admin/users', { email: 'a@example.com' })).json.user
+        .sub as string;
+      const b = (await asAdmin(s, 'POST', '/api/admin/users', { email: 'b@example.com' })).json.user
+        .sub as string;
+      for (const sub of [a, b]) {
+        await s.call(sub, 'POST', '/api/accounts', newAccount);
+        await s.call(sub, 'PUT', '/api/prefs', DEFAULT_PREFS);
+      }
+      expect((await asAdmin(s, 'DELETE', `/api/admin/users/${a}`)).status).toBe(200);
+      expect(await s.repo.listAccounts(a)).toHaveLength(0);
+      expect(await s.repo.listLoans(a)).toHaveLength(0);
+      expect(await s.repo.getPrefs(a)).toBeUndefined();
+      expect(await s.repo.listAccounts(b)).toHaveLength(1);
+      expect(await s.repo.getPrefs(b)).toBeDefined();
+      expect(s.creds.map.size).toBe(1);
+      expect(s.users.users.map((u) => u.sub)).toEqual([b]);
+    });
+
+    it("won't let an admin disable or delete themself", async () => {
+      const s = setup();
+      expect((await asAdmin(s, 'DELETE', '/api/admin/users/admin-sub')).status).toBe(400);
+      expect(
+        (await asAdmin(s, 'PATCH', '/api/admin/users/admin-sub', { enabled: false })).status,
+      ).toBe(400);
+    });
   });
 });
