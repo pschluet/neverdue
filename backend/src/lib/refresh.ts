@@ -20,6 +20,7 @@ export async function storeSnapshot(
     fees,
     lastRefreshedAt: now.toISOString(),
     lastError: undefined,
+    needsAttention: undefined,
   });
 }
 
@@ -29,6 +30,9 @@ export async function refreshAccount(
   sub: string,
   accountId: string,
 ): Promise<void> {
+  const existing = await deps.repo.getAccount(sub, accountId);
+  // Repeated failed sign-ins can lock a library card, so wait for the user to fix the PIN.
+  if (existing?.needsAttention) return;
   try {
     const creds = await deps.creds.get(sub, accountId);
     const session = await deps.library.login(creds);
@@ -36,11 +40,14 @@ export async function refreshAccount(
   } catch (e) {
     const account = await deps.repo.getAccount(sub, accountId);
     if (!account) return;
-    const message =
-      e instanceof LoginError && e.kind === 'bad-credentials'
+    const badCreds = e instanceof LoginError && e.kind === 'bad-credentials';
+    await deps.repo.putAccount(sub, {
+      ...account,
+      lastError: badCreds
         ? 'Sign-in failed. Check the card number and PIN.'
-        : 'Could not reach the library. Will retry on the next refresh.';
-    await deps.repo.putAccount(sub, { ...account, lastError: message });
+        : 'Could not reach the library. Will retry on the next refresh.',
+      needsAttention: badCreds || undefined,
+    });
   }
 }
 

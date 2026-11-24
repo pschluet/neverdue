@@ -62,6 +62,7 @@ export function createMockServices(): Services {
       displayName: 'Spouse',
       maskedCard: '•••• 1096',
       lastError: 'Sign-in failed. Check the card number and PIN.',
+      needsAttention: true,
       fees: { total: 0, items: [] },
     },
   ];
@@ -110,7 +111,10 @@ export function createMockServices(): Services {
     updateAccount: async (id, patch) => {
       const a = accounts.find((x) => x.id === id)!;
       if (patch.displayName) a.displayName = patch.displayName;
-      if (patch.pin) a.lastError = undefined;
+      if (patch.pin) {
+        a.lastError = undefined;
+        a.needsAttention = undefined;
+      }
       return wait({ ...a });
     },
     deleteAccount: async (id) => {

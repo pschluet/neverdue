@@ -64,6 +64,8 @@ export interface LibraryAccount {
   libraryAccountId?: number;
   lastRefreshedAt?: string;
   lastError?: string;
+  /** Set after a bad-credentials sign-in; the scraper skips the account until the PIN is updated. */
+  needsAttention?: boolean;
   fees: Fees;
 }
 

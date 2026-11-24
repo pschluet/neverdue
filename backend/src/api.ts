@@ -156,7 +156,10 @@ export function createApi(deps: ApiDeps) {
             await deps.creds.put(sub, id, { username: current.username, pin: p.data.pin });
           }
           const updated = { ...account, displayName: p.data.displayName ?? account.displayName };
-          if (p.data.pin !== undefined) updated.lastError = undefined;
+          if (p.data.pin !== undefined) {
+            updated.lastError = undefined;
+            updated.needsAttention = undefined;
+          }
           await deps.repo.putAccount(sub, updated);
           if (p.data.pin !== undefined) await deps.invokeScraper({ sub, accountId: id });
           return json(200, { account: updated });

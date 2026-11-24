@@ -226,3 +226,43 @@ describe('api', () => {
     expect([a1, a2]).toHaveLength(2);
   });
 });
+
+describe('bad credentials', () => {
+  it('pauses an account after a bad-credentials sign-in until the PIN is updated', async () => {
+    const s = setup();
+    const id = (await s.call('u1', 'POST', '/api/accounts', newAccount)).json.account.id;
+    const stored = [...s.creds.map.keys()][0]!;
+    s.creds.map.set(stored, { username: '21234000011234', pin: 'wrong' });
+
+    const login = vi.spyOn(library, 'login');
+    await runScrape({ repo: s.repo, creds: s.creds, library }, { sub: 'u1' });
+    expect((await s.repo.getAccount('u1', id))?.needsAttention).toBe(true);
+
+    login.mockClear();
+    await runScrape({ repo: s.repo, creds: s.creds, library }, {});
+    expect(login).not.toHaveBeenCalled(); // skipped, so the card can't get locked
+
+    expect((await s.call('u1', 'PATCH', `/api/accounts/${id}`, { pin: 'good-pin' })).status).toBe(
+      200,
+    );
+    const acct = await s.repo.getAccount('u1', id);
+    expect(acct?.needsAttention).toBeUndefined();
+    await runScrape({ repo: s.repo, creds: s.creds, library }, {});
+    expect(login).toHaveBeenCalled();
+    login.mockRestore();
+  });
+
+  it('does not pause on a temporary library outage', async () => {
+    const s = setup();
+    const id = (await s.call('u1', 'POST', '/api/accounts', newAccount)).json.account.id;
+    const down: LibraryClient = {
+      login: async () => {
+        throw new LoginError('down', 'unavailable');
+      },
+    };
+    await runScrape({ repo: s.repo, creds: s.creds, library: down }, { sub: 'u1' });
+    const acct = await s.repo.getAccount('u1', id);
+    expect(acct?.lastError).toBeDefined();
+    expect(acct?.needsAttention).toBeUndefined();
+  });
+});

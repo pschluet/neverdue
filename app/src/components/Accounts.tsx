@@ -59,7 +59,14 @@ function AccountRow({ account, api, run }: { account: Account; api: Api; run: Ru
           <div className="muted small-text">
             {account.maskedCard} · refreshed {formatAgo(account.lastRefreshedAt)}
           </div>
-          {account.lastError && <div className="error-text small-text">{account.lastError}</div>}
+          {account.needsAttention ? (
+            <div className="banner error" role="alert">
+              Paused: the library rejected this card’s sign-in. Neverdue won’t try again until you
+              update the PIN.
+            </div>
+          ) : (
+            account.lastError && <div className="error-text small-text">{account.lastError}</div>
+          )}
         </div>
       </div>
       {mode === 'view' ? (

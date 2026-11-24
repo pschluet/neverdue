@@ -86,6 +86,7 @@ export function Checkouts({
       {failing.map((a) => (
         <div key={a.id} className="banner error">
           Couldn’t refresh {a.displayName}: {a.lastError}
+          {a.needsAttention && ' Update its PIN on the Cards tab to resume.'}
         </div>
       ))}
       {fees.map((a) => (

@@ -116,6 +116,14 @@ describe('App', () => {
     expect(document.body.textContent).not.toMatch(/Kids' card|4821/);
   });
 
+  it('notes paused cards on the configuration page', async () => {
+    const s = await signedIn();
+    render(<App services={s} />);
+    await screen.findByText(/The Overstory/);
+    await userEvent.click(screen.getByRole('link', { name: /Cards/ }));
+    expect(await screen.findByText(/Paused: the library rejected/)).toBeInTheDocument();
+  });
+
   it('switches tabs from the tab bar', async () => {
     const s = await signedIn();
     render(<App services={s} />);

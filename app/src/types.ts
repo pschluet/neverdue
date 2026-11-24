@@ -8,6 +8,7 @@ export interface Account {
   maskedCard: string;
   lastRefreshedAt?: string;
   lastError?: string;
+  needsAttention?: boolean;
   fees: Fees;
 }
 export interface Loan {
