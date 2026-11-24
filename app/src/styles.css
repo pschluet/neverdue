@@ -201,7 +201,7 @@ h3 {
   gap: 8px;
   overflow-x: auto;
   padding: 4px 0 2px;
-  margin-top: 8px;
+  margin: 8px 0 14px;
 }
 .chip {
   border: 1px solid var(--glass-edge);
@@ -265,6 +265,7 @@ h3 {
 input:not([type='checkbox']),
 select {
   font: inherit;
+  font-size: 1rem; /* iOS Safari zooms the page when a focused field is under 16px */
   color: var(--text);
   width: 100%;
   padding: 10px 14px;
@@ -282,10 +283,6 @@ label {
   font-size: 0.85rem;
   color: var(--text-2);
   font-weight: 500;
-}
-label input,
-label select {
-  font-size: 1rem;
 }
 .switch-row {
   display: flex;
@@ -357,7 +354,8 @@ input[role='switch']:checked::after {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom) + 12px);
+  /* Tuck into the home-indicator inset instead of stacking 12px on top of it. */
+  bottom: max(10px, calc(env(safe-area-inset-bottom) - 8px));
   padding: 6px;
   border-radius: 999px;
   width: min(calc(100% - 32px), 420px);
