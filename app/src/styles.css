@@ -211,8 +211,7 @@ h3 {
   gap: 8px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scroll-snap-type: x proximity;
-  scroll-padding-inline: 16px;
+  position: relative; /* offsetParent for the chips, so offsetLeft is in scroll coordinates */
   padding: 4px 16px 6px;
   scrollbar-width: none;
   --fade-start: 0px;
@@ -242,7 +241,6 @@ h3 {
   --fade-end: 56px;
 }
 .chips > .chip {
-  scroll-snap-align: start;
   flex: none;
 }
 .scroll-arrow {
