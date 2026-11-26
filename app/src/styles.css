@@ -15,6 +15,9 @@
   --bg-2: #fce7f3;
   --bg-3: #dcfce7;
   --radius: 22px;
+  /* Near-opaque: backdrop blur does not work inside an already-blurred glass card. */
+  --popover: rgba(250, 251, 255, 0.98);
+  --hover: rgba(10, 132, 255, 0.1);
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +28,8 @@
     --glass-strong: rgba(58, 58, 70, 0.7);
     --glass-edge: rgba(255, 255, 255, 0.18);
     --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --popover: rgba(40, 40, 50, 0.98);
+    --hover: rgba(10, 132, 255, 0.22);
     --bg-1: #0b1a33;
     --bg-2: #2a1030;
     --bg-3: #0b2a22;
@@ -196,12 +201,89 @@ h3 {
   font-size: 0.85rem;
 }
 
+/* Horizontally scrolling chip row: no scrollbar; a fade + arrow mark each edge with more beyond. */
+.scroll-row {
+  position: relative;
+  margin: 8px -16px 14px; /* full-bleed, so chips scroll out to the screen edge */
+}
 .chips {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 4px 0 2px;
-  margin: 8px 0 14px;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 16px;
+  padding: 4px 16px 6px;
+  scrollbar-width: none;
+  --fade-start: 0px;
+  --fade-end: 0px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)),
+    transparent
+  );
+}
+.chips::-webkit-scrollbar {
+  display: none;
+}
+.scroll-row[data-more-start] .chips {
+  --fade-start: 56px;
+}
+.scroll-row[data-more-end] .chips {
+  --fade-end: 56px;
+}
+.chips > .chip {
+  scroll-snap-align: start;
+  flex: none;
+}
+.scroll-arrow {
+  position: absolute;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin-top: -13px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.scroll-arrow.start {
+  left: 8px;
+  transform: translateX(-4px);
+}
+.scroll-arrow.end {
+  right: 8px;
+  transform: translateX(4px);
+}
+.scroll-row[data-more-start] .scroll-arrow.start,
+.scroll-row[data-more-end] .scroll-arrow.end {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.scroll-arrow:active {
+  transform: scale(0.9);
 }
 .chip {
   border: 1px solid var(--glass-edge);
@@ -263,7 +345,7 @@ h3 {
 }
 
 input:not([type='checkbox']):not([type='radio']),
-select {
+.select-trigger {
   font: inherit;
   font-size: 1rem; /* iOS Safari zooms the page when a focused field is under 16px */
   color: var(--text);
@@ -289,11 +371,108 @@ input.narrow:not([type='checkbox']):not([type='radio']) {
   font-size: 1rem;
   color: var(--text-2);
 }
-label {
+label,
+.field-label {
   display: block;
   font-size: 0.85rem;
   color: var(--text-2);
   font-weight: 500;
+}
+
+/* Custom dropdown (Select.tsx). The trigger shares the text-input look above. */
+.select {
+  position: relative;
+}
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.select-trigger:focus-visible,
+.select-trigger[aria-expanded='true'] {
+  outline: none;
+  border-color: var(--tint);
+  box-shadow: 0 0 0 3px var(--hover);
+}
+.select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-chevron {
+  flex: none;
+  color: var(--text-2);
+  transition: transform 0.2s ease;
+}
+.select-trigger[aria-expanded='true'] .select-chevron {
+  transform: rotate(180deg);
+  color: var(--tint);
+}
+.select-list {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: 18px;
+  background: var(--popover);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--glass-edge);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    var(--glass-shadow);
+  transform-origin: top center;
+  animation: select-in 0.16s ease-out;
+}
+.select-list.above {
+  top: auto;
+  bottom: calc(100% + 6px);
+  transform-origin: bottom center;
+}
+@keyframes select-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 1rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.select-option.active {
+  background: var(--hover);
+}
+.select-option[aria-selected='true'] {
+  color: var(--tint);
+  font-weight: 600;
+}
+.select-check {
+  flex: none;
+}
+.select-hint {
+  display: block;
 }
 .switch-row {
   display: flex;

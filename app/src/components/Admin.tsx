@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys, useAdminUsers } from '../lib/queries';
 import type { AdminUser, Api } from '../types';
+import { Select } from './Select';
 
 const statusPill = (u: AdminUser) => {
   if (!u.enabled) return <span className="pill off">Disabled</span>;
@@ -198,16 +199,12 @@ function LinkForm({
         void onSubmit(partner);
       }}
     >
-      <label>
-        Link {user.email} with
-        <select value={partner} onChange={(e) => setPartner(e.target.value)}>
-          {candidates.map((c) => (
-            <option key={c.sub} value={c.sub}>
-              {c.email}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        label={`Link ${user.email} with`}
+        value={partner}
+        onChange={setPartner}
+        options={candidates.map((c) => ({ value: c.sub, label: c.email }))}
+      />
       <p className="muted small-text">
         Both users will see all of both users&apos; cards and checkouts. Each keeps their own alert
         settings.

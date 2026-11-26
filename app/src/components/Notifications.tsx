@@ -2,8 +2,17 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys, usePrefs } from '../lib/queries';
 import type { Api, Prefs, PushService } from '../types';
+import { Select, type SelectOption } from './Select';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const FREQUENCIES: SelectOption<Prefs['frequency']>[] = [
+  { value: 'daily', label: 'Once a day' },
+  { value: 'weekly', label: 'Once a week' },
+];
+const HOURS: SelectOption<number>[] = Array.from({ length: 24 }, (_, h) => ({
+  value: h,
+  label: new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: 'numeric' }),
+}));
 
 export function Notifications({ api, push }: { api: Api; push: PushService }) {
   const queryClient = useQueryClient();
@@ -167,42 +176,27 @@ export function Notifications({ api, push }: { api: Api; push: PushService }) {
         </label>
 
         <h3>How often</h3>
-        <label>
-          Frequency
-          <select
-            value={prefs.frequency}
-            onChange={(e) => set({ frequency: e.target.value as Prefs['frequency'] })}
-          >
-            <option value="daily">Once a day</option>
-            <option value="weekly">Once a week</option>
-          </select>
-        </label>
+        <Select
+          label="Frequency"
+          value={prefs.frequency}
+          onChange={(frequency) => set({ frequency })}
+          options={FREQUENCIES}
+        />
         {prefs.frequency === 'weekly' && (
-          <label>
-            Day
-            <select
-              value={prefs.weekday}
-              onChange={(e) => set({ weekday: Number(e.target.value) })}
-            >
-              {DAYS.map((d, i) => (
-                <option key={d} value={i}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select
+            label="Day"
+            value={prefs.weekday}
+            onChange={(weekday) => set({ weekday })}
+            options={DAYS.map((d, i) => ({ value: i, label: d }))}
+          />
         )}
-        <label>
-          Time
-          <select value={prefs.hour} onChange={(e) => set({ hour: Number(e.target.value) })}>
-            {Array.from({ length: 24 }, (_, h) => (
-              <option key={h} value={h}>
-                {new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: 'numeric' })}
-              </option>
-            ))}
-          </select>
-          <span className="muted small-text">{prefs.timeZone}</span>
-        </label>
+        <Select
+          label="Time"
+          value={prefs.hour}
+          onChange={(hour) => set({ hour })}
+          options={HOURS}
+          hint={prefs.timeZone}
+        />
         <button className="btn primary">Save</button>
         {msg && (
           <span className="ok-text" role="status">

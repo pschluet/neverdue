@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { describeDue, formatAgo, formatDate, isOverdue, sortLoans, todayISO } from '../lib/loans';
+import { ScrollRow } from './ScrollRow';
 import type { Account, Api, Loan, LoansResponse, RenewResult } from '../types';
 
 export function Checkouts({
@@ -94,7 +95,7 @@ export function Checkouts({
       ))}
 
       {accounts.length > 1 && (
-        <div className="chips" role="group" aria-label="Filter by card">
+        <ScrollRow label="Filter by card" activeKey={filter}>
           <button
             className={filter === null ? 'chip active' : 'chip'}
             onClick={() => setFilter(null)}
@@ -110,7 +111,7 @@ export function Checkouts({
               {a.displayName}
             </button>
           ))}
-        </div>
+        </ScrollRow>
       )}
 
       {accounts.length === 0 ? (
