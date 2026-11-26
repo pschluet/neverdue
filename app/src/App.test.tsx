@@ -201,9 +201,10 @@ describe('App', () => {
     await userEvent.click(
       within(row('paul@paulschlueter.com')).getByRole('button', { name: /Link to another user/ }),
     );
-    await userEvent.selectOptions(screen.getByLabelText(/Link paul@paulschlueter.com with/), [
-      'sam@example.com',
-    ]);
+    await userEvent.click(
+      screen.getByRole('combobox', { name: /Link paul@paulschlueter.com with/ }),
+    );
+    await userEvent.click(screen.getByRole('option', { name: 'sam@example.com' }));
     await userEvent.click(screen.getByRole('button', { name: 'Link' }));
     expect(
       await within(row('sam@example.com')).findByText('Linked with paul@paulschlueter.com'),

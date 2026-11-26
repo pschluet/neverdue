@@ -47,3 +47,36 @@ export const ShieldIcon = () => (
     <path d="m9 12 2.2 2.2L15.2 10" />
   </Icon>
 );
+
+/** Small inline glyphs for controls (chevrons, checkmarks). */
+function Glyph({ d, className }: { d: string; className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
+export const ChevronDownIcon = ({ className }: { className?: string }) => (
+  <Glyph className={className} d="m6 9 6 6 6-6" />
+);
+export const ChevronLeftIcon = ({ className }: { className?: string }) => (
+  <Glyph className={className} d="m15 6-6 6 6 6" />
+);
+export const ChevronRightIcon = ({ className }: { className?: string }) => (
+  <Glyph className={className} d="m9 6 6 6-6 6" />
+);
+export const CheckIcon = ({ className }: { className?: string }) => (
+  <Glyph className={className} d="m5 12.5 4.5 4.5L19 7.5" />
+);
